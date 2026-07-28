@@ -1,0 +1,246 @@
+# Incident history and library snapshots
+
+Chronological record of what's actually been run against this library, the
+bugs found along the way, and the fixes. `SKILL.md` links here for the "why"
+behind specific safety rules; this file has the full story. Originally kept
+in the library root's `CLAUDE.md` before the toolkit moved into this repo
+under `.agents/` - see git history there for anything predating this file.
+
+## Library snapshot (pre-cleanup baseline, 2026-07-27)
+
+Captured via `scan` (856/856 files probed, 0 errors) + `stats`, before any of
+the cleanup runs below.
+
+- **856 files, 5.0 TB, ~696 hours** across `Movies/` and `TV Shows/`.
+- **Containers:** 766 `.mkv`, 90 `.mp4`.
+- **Video:** HEVC Main10 dominates (623 files, i.e. 10-bit HDR-capable
+  rips), AV1 Main (131, mostly the Love Death & Robots / anime slice),
+  H.264 High (70), HEVC Main 8-bit (22), H.264 Main (10). Resolutions:
+  443 x 1080p, 356 x 2160p, 54 x 720p.
+- **Audio:** dominated by E-AC3/Dolby Digital+ (1,234 tracks total: 810
+  plain + 424 flagged Dolby Atmos), Opus (307, the AV1-muxed anime slice),
+  AC-3 (137), AAC (74 combined), DTS-HD MA (50), TrueHD Atmos (44). Only
+  ~94 of 1,859 audio tracks (~5%) are lossless.
+- **Subtitles:** overwhelmingly SubRip/SRT (12,384 tracks), plus
+  `mov_text` (2,096, the mp4 slice), PGS/bitmap subs (862), ASS (216).
+  15,560 subtitle tracks total across 856 files - an average of ~18 per
+  file, because most releases in this library ship with a full
+  20-40-language subtitle set.
+- **Non-English tracks:** 249/856 files carry a non-English **audio**
+  track (dubs - mostly French, Spanish, Japanese, German, Italian);
+  631/856 files carry a non-English **subtitle** track (almost every
+  multi-language release, since subs are cheap to bundle).
+- **Default-policy remux impact:** 643/856 files (75%) would be modified.
+  814 audio tracks and 13,845 subtitle tracks would be dropped, for an
+  estimated **~185 GB reclaimed** (subtitle removal is negligible for
+  space - a few tens of MB total across the whole library - the savings
+  are almost entirely from dropping foreign-dub audio tracks).
+- **Anime:** 71/856 files (e.g. *SPY x FAMILY*, *Tales of Wedding Rings*)
+  match the Japanese-original pattern (Japanese audio, <=2 audio tracks
+  total) and get the reversed policy - Japanese audio kept, English audio
+  dropped, both English and Japanese subtitles kept. Shows that merely
+  include a Japanese dub among a dozen+ other languages (*Daredevil - Born
+  Again*, *The Rings of Power*) do not match and stay English-first.
+
+## Cleanup run results (2026-07-28)
+
+The default-policy `apply --yes --no-backup` run was actually executed
+against the full library: **598 files changed, 257 needed no change, 1
+error.** Library size dropped from ~5.0 TB to **4.82 TB** (~180 GB
+reclaimed, matching the ~185 GB estimate closely). Verified via `stats`:
+only 71/856 files carried non-English audio afterward (exactly the anime
+files, kept intentionally) and remaining non-English subtitles were
+essentially just forced tracks and anime JP subs kept by design.
+
+The one error, `TV Shows/Silo/Season 01/Silo - S01E07 - The Flamekeepers.mp4`,
+is **pre-existing source corruption**, not a tool bug - confirmed by hand:
+a raw decode (no muxing) throws `Invalid NAL unit size` errors with garbage
+values and aborts on decode-error-rate, and even a plain video-only stream
+copy hits `Packet corrupt (stream = 0, ...)` from ffmpeg's own demuxer ~36
+minutes in, reproducing identically whether muxed to mp4 or mkv. The file's
+original was never touched (verification failed before any write), but it
+keeps showing up as a pending `plan`/`apply` candidate forever since it can
+never succeed - that episode needs re-acquiring, not re-running.
+
+Two real tool bugs were found and fixed along the way during this run: an
+AV1 false-positive in the decode verification (see "AV1 tail-seek false
+positive" below), and the scanner briefly indexing its own in-flight temp
+files (fixed by skipping dotfiles in `scan.py`'s file walker).
+
+### AV1 tail-seek false positive (Arcane S01E01)
+
+The original decode-verification check decoded a few seconds at both the
+head *and* tail of the remuxed file (`-sseof` backward seek for the tail).
+On some AV1 remuxes this reliably tripped ffmpeg's null-muxer "non
+monotonically increasing dts" check on the first few frames after the seek,
+even though mkvmerge exited 0. Confirmed by hand: the *untouched original*
+of *Arcane* S01E01 passes the identical `-sseof` check cleanly, but the
+remux fails it - yet a full linear decode of that exact remux is completely
+error-free start to finish. Root cause: mkvmerge writes valid-but-different
+cue/cluster boundaries than the source encoder, and some AV1 reference
+structures don't seek into cleanly on a cold seek - a seek artifact, not
+corruption. Fixed by dropping the tail check entirely; a truncated tail is
+still caught by the duration-match check. The verification is now
+deliberately head-only, no seeking at all.
+
+### DTS/eARC follow-up (same day)
+
+The user found DTS-HD MA audio comes through **muted** on their LG TV +
+Sony soundbar over eARC (LG doesn't license DTS decode in most webOS
+firmware, unlike AC-3/E-AC-3/TrueHD/Atmos, which all worked fine - confirmed
+by the user actually watching a TrueHD+Atmos title first). Of 59 files with
+DTS-family audio: **19 had a safe fallback already** (AC-3 or TrueHD
+alongside DTS-HD MA - *Jack Ryan* x16, *Alien: Covenant*, *Prometheus*,
+*Æon Flux*) and got the DTS track dropped via `apply --drop-audio-codec
+dts` - all 19 succeeded. The other **40 were DTS-only** (*Band of
+Brothers*, *The Pacific*, *His Dark Materials*, *Watchmen*) and got their
+audio transcoded DTS/DTS-HD MA -> E-AC3 640k via the new `transcode`
+subcommand - all 40 succeeded after fixing the two bugs below. `stats`
+showed zero files with any DTS-family audio afterward.
+
+Two more real bugs were found and fixed during this follow-up:
+
+- **mkvmerge codec normalization gap.** `--drop-audio-codec dts` silently
+  matched nothing on `.mkv` files because `track_policy.from_mkvmerge_track()`
+  compared mkvmerge's free-text codec description ("DTS-HD Master Audio")
+  against the flag's ffprobe-style short name ("dts"). Fixed by normalizing
+  through mkvmerge's stable `codec_id` (`A_DTS` -> `dts`) instead - see
+  `_MKVMERGE_AUDIO_CODEC_ID_MAP` in `track_policy.py`. `plan` (cache-based,
+  always ffprobe-shaped) and `apply` (live per-file, mkvmerge-shaped for
+  `.mkv`) disagreeing with each other on the same library is what exposed
+  it - a useful cross-check to remember for future features that compare
+  `codec_name` on `.mkv` files specifically.
+- **A second decode-verification false positive**, this time on plain HEVC
+  (*His Dark Materials* S01), and this one crucially appeared on the
+  *untouched original* with zero seeking involved - "non monotonically
+  increasing dts to muxer" again, but at the very start of decode this
+  time, not after a seek. Since even the pristine original tripped it, this
+  proved to be a source-encoder timestamp quirk, not something remuxing or
+  transcoding introduces. Fixed by whitelisting that one specific ffmpeg
+  message string; any other stderr content still fails verification (real
+  corruption, e.g. the *Silo* case above, reads nothing like it).
+
+### Incident: Prometheus (2012) lost its main soundtrack
+
+While scoping a follow-up request (drop redundant AC-3 where TrueHD already
+covers playback), a real data-loss bug from the DTS/eARC follow-up above
+came to light: **`apply --drop-audio-codec dts` had already stripped
+Prometheus's only real soundtrack**, run with `--no-backup`, and it went
+undetected until this point. Root cause: Prometheus's audio was DTS-HD MA
+(main) + 2 AC-3 tracks that were *both* commentary (director commentary,
+writer commentary) - no plain AC-3 main mix like *Alien: Covenant*/*Æon
+Flux* had. The "at least one audio track survives" safety net only checked
+`keep_audio` was non-empty; it had no concept of "primary" vs "commentary,"
+so two surviving commentary tracks satisfied it and the DTS-HD MA drop went
+ahead, leaving the file with only two 224kbps stereo commentary tracks and
+no way to just watch the film. Audited the rest of the library for the same
+shape (all remaining audio commentary-titled/flagged) - **Prometheus was
+the only file affected**; *Æon Flux* and *Alien: Covenant* both kept a real
+non-commentary track. No backup existed for that run, so the DTS-HD MA
+track was not recoverable from this drive - the user deleted the file to
+re-acquire it rather than keep the broken copy.
+
+Fixed in `track_policy.plan_streams()`: the fallback now triggers whenever
+`keep_audio` has no *non-commentary* track (not just when it's empty), and
+prefers restoring a non-commentary candidate from the full track list over
+whatever commentary tracks already "satisfied" the old check - see
+`is_commentary()` usage in the fallback block. Re-audited the whole library
+against the fixed logic before running anything else: zero files would end
+up commentary-only under the fix.
+
+With the fix verified, the original follow-up request (drop redundant AC-3
+where TrueHD already covers playback) ran cleanly: 48/49 changed (the 49th
+being the already-known permanent *Silo* S01E07 error), 0 new issues. Every
+AC-3-only file (25, after Prometheus's removal) was correctly left
+untouched - confirmed by re-running the commentary-only audit script
+post-run (0 affected) and spot-checking *Jack Ryan* S01E01 (TrueHD-only
+now, duration matches, decodes clean). Library down to **5.19 TB**.
+
+### Incident: loose file at the library root got picked up mid-run
+
+While a later cleanup pass (`--single-audio-track --drop-sdh`) was running,
+the user pointed out a file (`Dune.Part.One.2021...mkv`) sitting loose
+directly at the library root, not yet sorted into `Movies/`, partway
+through being remuxed. Nothing was lost (verification gates the swap same
+as always - the original was confirmed untouched and the in-flight temp
+file was discarded), but the tool had no concept of "not yet organized" and
+would have processed it like any other file. Fixed in `scan.py`'s
+`walk_media_files()`: files sitting directly in the library root (not
+inside any subdirectory) are now skipped entirely, so freshly-added,
+not-yet-sorted files are invisible to every subcommand until moved into
+`Movies/` or `TV Shows/`.
+
+### `--single-audio-track` / `--drop-sdh`: four false positives caught before running for real
+
+Building the single-audio-track and SDH-drop policy flags, hand-auditing
+the *entire* library against the new logic before executing (rather than
+trusting the design and finding out from a live run) caught four distinct
+false-positive shapes, each from a different real file:
+
+1. **Forced flag not actually set** (several *Rings of Power* episodes,
+   Amazon Prime source). A forced/signs-only subtitle track (tens to a few
+   hundred bytes) sat alongside the full dialogue track (tens of KB) with
+   the `forced` disposition bit left unset by the source. An early version
+   of the size heuristic read "much smaller than its sibling" as "this is
+   the plain track" and would have dropped the *real* dialogue track as
+   "SDH" - backwards. Fixed by adding an absolute+relative size floor
+   before that version was superseded by restriction #4 below.
+2. **PGS vs SubRip size mismatch** (*Alien: Covenant*). Bitmap (PGS)
+   subtitle tracks run 100-1000x larger than text (SubRip) tracks for
+   identical content, purely from format. An early version compared sizes
+   across codecs within a language group and flagged a plain PGS dialogue
+   track as "SDH" against an unrelated, much smaller SRT sibling. Fixed by
+   grouping candidates by `(language, subtitle codec)`, never comparing
+   across codecs.
+3. **"Forced"/"Commentary" in the title but the disposition bit unset**
+   (*Mr. Robot* S02, PGS tracks titled exactly "Forced" and "Commentary").
+   Fixed by also checking title text for these words, not just the
+   disposition flags (mirroring how `is_commentary()` already worked for
+   audio).
+4. **Mistagged language** (*Jack Ryan* S01E06: a PGS track tagged
+   `language=eng` but titled "German"). Grouped by its wrong language tag,
+   it sat next to the genuine English PGS track, and the ratio-based
+   heuristic picked whichever of the two was smaller as "plain" - which
+   happened to be the German one. Fixed by excluding any track whose title
+   names a language other than the one the current comparison is for
+   (`_looks_mistagged_other_language()`, checked against `langs.NAMES`).
+
+Also restricted the heuristic to apply only in English/Japanese buckets
+(comparing arbitrary "unknown language" tracks against each other made no
+sense - e.g. *Murderbot* S01E07 has three blank-language Chinese
+Simplified/Traditional tracks that would otherwise get compared against
+each other) and only when *exactly two* unlabeled candidates remain after
+all the above exclusions (*Mission: Impossible - The Final Reckoning* has
+five untitled PGS English subtitle tracks with no reliable way to pick
+"the" plain one from size alone - left untouched rather than guessed).
+
+Final audit before running against the real library: 428 SDH tracks would
+be dropped, only 2 of which via the size heuristic rather than an explicit
+flag/title - both plausible, modest-ratio (1.1-1.2x) pairs. Zero cases of
+losing an entire subtitle language group. The run itself was interrupted
+partway through (disk-space batching, then the loose-root-file fix above)
+- see git history / conversation log for final completion status rather
+than treating this file as authoritative on whether it finished.
+
+## Operational lessons (apply broadly, not just to one incident above)
+
+- **Backups don't shrink disk usage until purged.** A same-filesystem
+  `shutil.move` backup is free to create, but it doesn't reclaim anything -
+  the disk holds both the old and new copy until `purge-backups` runs.
+  Backing up everything in a whole-library run before purging once at the
+  end came close to exhausting free space; purging in batches (verify a
+  chunk, purge, resume) avoids this without giving up the safety net
+  `--no-backup` trades away.
+- **A "some audio survived" check is not the same as "a usable soundtrack
+  survived."** Zero-track and commentary-only both need the same fallback
+  protection; treating them as different cases is exactly the gap that lost
+  Prometheus's audio.
+- **Cross-checking two independent code paths against the same data finds
+  bugs neither path's own tests would catch.** The mkvmerge codec-ID gap
+  was only visible because `plan` (ffprobe-shaped) and `apply`
+  (mkvmerge-shaped) disagreed on the same file.
+- **Audit the whole library against new policy logic before running it for
+  real, not just a handful of hand-picked examples.** Three of the four
+  SDH false positives above were each found on a single specific file out
+  of hundreds - none would have turned up from spot-checking a small
+  sample.

@@ -1,0 +1,2 @@
+# Shared runtime deps for skills/<name>/scripts/*.py that need them.
+# media-library is stdlib-only (wraps ffprobe/ffmpeg/mkvmerge via subprocess) -- none yet.

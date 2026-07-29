@@ -158,3 +158,37 @@ This was measured only on this specific GPU/driver combination
 (Ada Lovelace, driver 610.43.03); if this skill ever runs on meaningfully
 different NVENC hardware, it'd be worth re-measuring rather than assuming
 the same holds.
+
+## MKV cover art: `-disposition:v attached_pic` is silently a no-op
+
+**What happened:** the first attempt at embedding cover art followed the
+pattern used for e.g. audio-file album art -- map the poster image as a
+second video-type output stream and flag it `-disposition:v:1
+attached_pic`. `ffmpeg` accepts this with no warning or error at any
+verbosity level, and the resulting file plays fine, but the flag never
+actually takes -- confirmed directly with `mkvmerge --identify` (the
+authoritative tool for what a Matroska file actually contains): the
+disposition came back `attached_pic: 0` regardless of exact command form
+tried (`attached_pic`, `+attached_pic`, targeting `v:0` alone, before or
+after other output options). ffprobe's own `-show_streams` view doesn't
+surface anything to contradict this either -- it just shows a second
+ordinary "video" stream, no hint that anything is missing.
+
+**Why:** `attached_pic` disposition is an MP4-family convention (cover art
+*is* literally a flagged stream there). Matroska has a completely different,
+unrelated mechanism: real container-level **attachments** (the same
+mechanism this skill already uses read-only for font attachments, mapped via
+`0:t?`) -- not a video stream at all.
+
+**Fix:** ffmpeg's `-attach <path>` output option, confirmed correct via
+`mkvmerge --identify` showing a genuine `Attachment ID` entry (not an extra
+`Track ID`). Two more things had to be right before it actually worked:
+`-attach` requires an explicit `-metadata:s:t:N mimetype=...` or ffmpeg
+refuses to write the file at all (`"Attachment stream N has no mimetype tag
+and it cannot be deduced from the codec id"` -- a real error, not a
+warning); and `N` is *not* always `0` -- it's one past however many
+attachment-type streams the source already had (e.g. font attachments
+mapped via `0:t?`), confirmed by deliberately muxing a source with one
+pre-existing attachment and watching ffmpeg's own error name the *next*
+index. `probe.py`'s new `attachment_count` field exists specifically to
+get this right (`command._cover_art_args`).

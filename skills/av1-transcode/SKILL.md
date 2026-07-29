@@ -83,15 +83,21 @@ python3 <path-to-this-skill>/scripts/av1transcode.py <subcommand> [options]
    # source is never touched in this mode (no backup/delete either)
    python3 scripts/av1transcode.py run --path "Some Movie" --output-dir /converted --yes
 
-   # keep every audio/subtitle track instead of the eng-only default
+   # keep every audio/subtitle track instead of the single-best-eng-track default
    python3 scripts/av1transcode.py run --path "Some Movie" --audio-lang all --subtitle-lang all --yes
+
+   # force a specific poster instead of auto-detecting poster.jpg/cover.jpg next to the source
+   python3 scripts/av1transcode.py run --path "Some Movie" --cover-image /path/to/poster.jpg --yes
    ```
    Defaults: `--profile film`, `--backend auto` (GPU if an AV1-capable
    NVIDIA GPU is found and the source has no Dolby Vision, else CPU),
-   `--audio-lang eng`, `--subtitle-lang eng`, output bitrate capped to 85%
-   of the source's own bitrate (see "Language filtering and bitrate cap"
-   below) - every one of these is overridable per-invocation via CLI flag or
-   persistently via `.env` (see "Configuration").
+   `--audio-lang eng` reduced to the single highest-quality matching track,
+   `--subtitle-lang eng` preferring plain over SDH, output bitrate capped to
+   85% of the source's own bitrate, cover art auto-embedded if a poster/cover
+   image is found next to the source (see "Language filtering, single audio
+   track, and bitrate cap" and "Cover art" below) - every one of these is
+   overridable per-invocation via CLI flag or persistently via `.env` (see
+   "Configuration").
 
 4. **`purge-backups`** - Once re-encoded files have been spot-checked for
    playback/quality, permanently deletes the backed-up originals.
@@ -111,17 +117,30 @@ variable > `.env` file > built-in default. This skill needs no external
 credentials, unlike `media-organizer`'s `.env` - every key here is a plain
 preference, so there's nothing required to fill in.
 
-## Language filtering and bitrate cap
+## Language filtering, single audio track, and bitrate cap
 
-- **Audio/subtitles default to `eng`** (`--audio-lang`/`--subtitle-lang`,
-  or `all` to keep every track). This is a plain by-language keep/drop (no
-  commentary/SDH/anime-release nuance - that's still `media-library`'s
-  job), added directly here because "just keep English" is common enough to
-  not require a separate `media-library` pass first. Audio has a
-  never-go-silent fallback: if nothing matches, every original audio track
-  is kept instead. Subtitles have no such fallback (zero subtitles is a
-  normal outcome). The first kept track of each type gets an explicit
-  `default` disposition flag.
+- **Audio defaults to the single highest-quality `eng` track**
+  (`--audio-lang`, or `all` to keep every language unfiltered). Once
+  language-filtered, `--all-audio-tracks` keeps every matching track instead
+  of reducing to one. Quality ranking is a plain codec-family tier (lossless
+  -- TrueHD/FLAC/DTS-HD MA -- unconditionally outranks lossy -- E-AC3/AC3/
+  AAC -- regardless of bitrate; ties within a tier break on channel count
+  then bitrate), so a TrueHD Atmos track wins over a same-language E-AC3
+  "compatibility" copy of the same mix - a real pattern in remuxes that
+  carry both (see `reference/presets.md`). A never-go-silent fallback still
+  applies: if nothing matches `--audio-lang`, every original track becomes
+  the fallback pool, and the single best of *that* is picked - never zero
+  audio.
+- **Subtitles default to `eng`, preferring plain over SDH**
+  (`--subtitle-lang`, or `all`). Unlike audio, every matching plain
+  (non-SDH) track is kept, not reduced to one - subtitles are cheap. SDH
+  tracks for that language are only kept if there's no plain alternative at
+  all; detected via the `hearing_impaired` disposition flag or an
+  "SDH"/"hearing impaired"/"deaf" title, the same signals (deliberately
+  simplified) as media-library's `track_policy.is_sdh`.
+- The first kept audio track and first kept subtitle track each get an
+  explicit `default` disposition flag; any other kept subtitle tracks get it
+  explicitly cleared.
 - **Output video bitrate is capped to 85% of the source's own bitrate by
   default** (`--max-bitrate-fraction`, or `--no-bitrate-cap` to disable).
   CRF/CQ targets a *quality level*, not a *size ceiling* - fine for a
@@ -132,6 +151,22 @@ preference, so there's nothing required to fill in.
   happened - see `reference/incidents.md` - and the cap is the fix, not just
   a warning after the fact. On a genuine high-bitrate remux the cap
   essentially never binds.
+
+## Cover art (auto-detected, optional)
+
+`run` looks for a conventional poster/cover image (`poster.jpg`,
+`poster.png`, `cover.jpg`, `cover.png`, `folder.jpg`, `folder.png`, checked
+in that order) sitting next to the source file and, if found, embeds it as
+a proper Matroska attachment named `cover.jpg`/`cover.png` - not a
+disposition-flagged video stream, which is silently a no-op for MKV output
+(confirmed the hard way, see `reference/incidents.md`). This composes
+directly with `media-organizer`: run that skill first to identify the movie
+and fetch `poster.jpg` into its folder, then `av1-transcode` picks it up
+automatically with no TMDB integration or new dependency of its own - it
+only ever reads whatever's already on disk. `--cover-image PATH` forces a
+specific image instead of auto-detecting; `--no-cover-art` disables the
+lookup entirely. Nothing found (and no override) just means no cover gets
+embedded - never an error.
 
 ## Before running `--yes` against anything - always confirm scope with the user first
 
@@ -225,26 +260,31 @@ blocking on it.
 ## Extending
 
 `scripts/av1transcode/` is small and modular: `probe.py` (ffprobe wrapper,
-including HDR/Dolby Vision side-data extraction), `colorinfo.py` (pure HDR
+including HDR/Dolby Vision side-data extraction, per-track profile/title/
+hearing_impaired fields, and attachment counting), `colorinfo.py` (pure HDR
 metadata parsing/formatting, CICP lookup tables), `presets.py` (the
 resolution x profile preset table plus `resolution_tier`/`select_preset`/
 `opus_bitrate_kbps`/`source_video_bitrate_bps`/`max_bitrate_bps`),
-`langfilter.py` (pure by-language audio/subtitle keep/drop, with the
+`langfilter.py` (pure by-language audio/subtitle keep/drop, codec-quality
+ranking for picking the single best audio track, SDH detection, and the
 audio never-go-silent fallback), `config.py` (optional `.env` loading,
 mirroring `media-organizer`'s pattern), `gpu.py` (capability-probed AV1
 NVENC GPU detection), `command.py` (builds the actual `ffmpeg` argv for
-either backend - explicit per-stream `-map`, language filtering,
-disposition flags, bitrate cap), `run.py` (per-file orchestration: backend
-selection, live-streamed and persisted logging, verify, backup-or-mirror-
-to-output-dir, swap - the same shape as media-library's `apply.py`'s
-`_execute_backend_plan`, sized for a job that runs hours rather than
-seconds), `cli.py` (argparse subcommands, CLI-flag/`.env`/default
-precedence via `_resolve()`). `test_presets.py`, `test_colorinfo.py`,
-`test_langfilter.py`, `test_config.py`, and `test_command.py` cover the pure
-logic - run them (see `AGENTS.md` at the repo root for the lint/type-check/
-test commands) after touching any of those modules. Any change to
-`presets.py`'s numbers or `command.py`'s argument lists should be
-smoke-tested against a real short clip (see `reference/incidents.md` for
-why - most of its entries are bugs that only a real `ffmpeg` invocation
-against real hardware surfaced, not something code review or the unit
-tests alone would have caught) before being trusted as a new default.
+either backend - explicit per-stream `-map`, language/quality filtering,
+disposition flags, bitrate cap, cover-art attachment), `run.py` (per-file
+orchestration: backend selection, live-streamed and persisted logging,
+verify, backup-or-mirror-to-output-dir, swap, sidecar cover detection - the
+same shape as media-library's `apply.py`'s `_execute_backend_plan`, sized
+for a job that runs hours rather than seconds), `cli.py` (argparse
+subcommands, CLI-flag/`.env`/default precedence via `_resolve()`).
+`test_presets.py`, `test_colorinfo.py`, `test_langfilter.py`,
+`test_av1transcode_config.py`, and `test_command.py` cover the pure logic -
+run them (see `AGENTS.md` at the repo root for the lint/type-check/test
+commands, and note the test file naming gotcha it documents - test file
+basenames must be unique repo-wide, not just per skill) after touching any
+of those modules. Any change to `presets.py`'s numbers or `command.py`'s
+argument lists should be smoke-tested against a real short clip (see
+`reference/incidents.md` for why - most of its entries are bugs that only a
+real `ffmpeg` invocation against real hardware/files surfaced, not something
+code review or the unit tests alone would have caught) before being trusted
+as a new default.

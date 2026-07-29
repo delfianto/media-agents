@@ -58,6 +58,7 @@ def cmd_probe(args):
     cfg = config.load_config(args.env_file)
     audio_lang = _resolve(args.audio_lang, cfg.audio_lang)
     subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
+    single_audio_track = not args.all_audio_tracks
 
     for abs_path in _walk_media_files(root, args.path, args.limit):
         rel = abs_path.relative_to(root)
@@ -78,7 +79,9 @@ def cmd_probe(args):
         preset = presets.select_preset(video["height"], args.profile, hdr)
         size_desc = _human_size(probed["format"].get("size"))
 
-        kept_audio, audio_fallback = langfilter.filter_audio(probed["audio"], audio_lang)
+        kept_audio, audio_fallback = langfilter.filter_audio(
+            probed["audio"], audio_lang, single=single_audio_track
+        )
         kept_subs = langfilter.filter_subtitles(probed["subtitles"], subtitle_lang)
         audio_desc = (
             ", ".join(
@@ -107,6 +110,8 @@ def cmd_probe(args):
         if dropped_subs:
             subtitle_line += f" (drops {dropped_subs} not matching subtitle-lang={subtitle_lang!r})"
         print(subtitle_line)
+        cover = run_mod.find_sidecar_cover(abs_path)
+        print(f"      cover art: {cover if cover else '(none found)'}")
         if dv:
             print("      note: Dolby Vision present -- `run` forces backend=cpu regardless")
             print("            of --backend (av1_nvenc cannot preserve DV RPU metadata)")
@@ -148,6 +153,9 @@ def cmd_run(args):
         max_bitrate_fraction = None
     else:
         max_bitrate_fraction = _resolve(args.max_bitrate_fraction, cfg.max_bitrate_fraction)
+    single_audio_track = not args.all_audio_tracks
+    cover_image_path = Path(args.cover_image) if args.cover_image else None
+    auto_cover_art = not args.no_cover_art
 
     backup_dir = (
         None
@@ -190,8 +198,11 @@ def cmd_run(args):
             drop_subtitles=args.no_subtitles,
             audio_lang=audio_lang,
             subtitle_lang=subtitle_lang,
+            single_audio_track=single_audio_track,
             max_bitrate_fraction=max_bitrate_fraction,
             output_dir=output_dir,
+            cover_image_path=cover_image_path,
+            auto_cover_art=auto_cover_art,
             on_progress=_print_progress if args.yes else None,
         )
         if result.status == "planned":
@@ -275,6 +286,12 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         help="Content profile for preset selection (default: film)",
     )
     _add_language_args(sp)
+    sp.add_argument(
+        "--all-audio-tracks",
+        action="store_true",
+        help="Preview keeping every matching-language audio track instead of just the single "
+        "highest-quality one",
+    )
     sp.set_defaults(func=cmd_probe)
 
     sp = sub.add_parser("list-presets", help="Print the built-in resolution x profile preset table")
@@ -334,6 +351,14 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
     )
     _add_language_args(sp)
     sp.add_argument(
+        "--all-audio-tracks",
+        action="store_true",
+        help="Keep and transcode every audio track matching --audio-lang instead of just the "
+        "single highest-quality one (default: pick one -- e.g. a TrueHD Atmos track over a "
+        "same-language E-AC3 'compatibility' copy of the same mix, a real pattern in remuxes "
+        "with more than one delivery of the same audio)",
+    )
+    sp.add_argument(
         "--max-bitrate-fraction",
         type=float,
         default=None,
@@ -346,6 +371,18 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         "--no-bitrate-cap",
         action="store_true",
         help="Disable the source-relative bitrate ceiling entirely (pure CRF/CQ, no maximum)",
+    )
+    sp.add_argument(
+        "--cover-image",
+        default=None,
+        help="Embed this image as Matroska cover art (a proper attachment, not a video stream) "
+        "instead of auto-detecting one",
+    )
+    sp.add_argument(
+        "--no-cover-art",
+        action="store_true",
+        help="Don't look for or embed a poster.jpg/cover.jpg/folder.jpg sitting next to the "
+        "source (default: auto-embed one if found, e.g. one media-organizer already fetched)",
     )
     sp.set_defaults(func=cmd_run)
 

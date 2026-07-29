@@ -1,18 +1,28 @@
 """Build the ffmpeg command line for one file: video re-encoded to AV1
 (libsvtav1 or av1_nvenc per `backend`, capped to a fraction of the source's
-own bitrate -- see presets.MAX_BITRATE_FRACTION_OF_SOURCE), audio tracks
-matching `audio_lang` re-encoded to Opus (falling back to every track if
-none match), subtitle tracks matching `subtitle_lang` stream-copied,
-fonts/attachments always kept, chapters/metadata stream-copied untouched.
+own bitrate -- see presets.MAX_BITRATE_FRACTION_OF_SOURCE), the single
+best-quality audio track matching `audio_lang` re-encoded to Opus (falling
+back to every track if none match -- see langfilter.filter_audio), plain
+(non-SDH) subtitle tracks matching `subtitle_lang` stream-copied,
+fonts/attachments always kept, chapters/metadata stream-copied untouched,
+and an optional cover image added as a proper Matroska attachment (not an
+embedded video stream -- see reference/incidents.md for why that
+distinction matters).
 
 Streams are mapped explicitly by index (not a blanket `-map 0`) so a source
 cover-art "video" stream never gets swept into the AV1 encode alongside the
-real one, and so language filtering has something precise to filter.
+real one, and so language/quality filtering has something precise to filter.
 """
 
 from pathlib import Path
 
 from . import colorinfo, langfilter, presets
+
+_IMAGE_MIMETYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
 
 # scd=1 (scene change detection): keyframes land on actual cuts rather than
 # only the fixed GOP interval, a plain efficiency win with no quality
@@ -32,7 +42,9 @@ def build_command(
     drop_subtitles: bool = False,
     audio_lang: str = langfilter.ALL,
     subtitle_lang: str = langfilter.ALL,
+    single_audio_track: bool = True,
     max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
+    cover_image_path: str | Path | None = None,
 ) -> list[str]:
     video = probed.get("video")
     if video is None:
@@ -46,7 +58,9 @@ def build_command(
         else None
     )
 
-    kept_audio, _audio_fallback = langfilter.filter_audio(probed.get("audio", []), audio_lang)
+    kept_audio, _audio_fallback = langfilter.filter_audio(
+        probed.get("audio", []), audio_lang, single=single_audio_track
+    )
     kept_subtitles = (
         []
         if drop_subtitles
@@ -95,8 +109,38 @@ def build_command(
         cmd += _disposition_args("s", len(kept_subtitles))
     cmd += ["-c:t", "copy"]
 
+    if cover_image_path is not None:
+        cmd += _cover_art_args(cover_image_path, probed.get("attachment_count", 0))
+
     cmd.append(str(output_path))
     return cmd
+
+
+def _cover_art_args(cover_image_path: str | Path, existing_attachment_count: int) -> list[str]:
+    """A cover image is a real Matroska *attachment* (`-attach`), not a
+    disposition-flagged video stream -- ffmpeg accepts `-disposition:v:N
+    attached_pic` without error, but it's silently a no-op for MKV output
+    (confirmed directly: mkvmerge showed attached_pic=0 either way). The
+    correct mechanism, confirmed with mkvmerge --identify, is `-attach`.
+
+    ffmpeg requires an explicit mimetype for any attachment (errors with
+    "has no mimetype tag and it cannot be deduced from the codec id"
+    otherwise) and addresses it by *attachment-stream* index -- one past
+    however many attachments the source already had (fonts mapped via
+    `0:t?`), not always 0 -- so `existing_attachment_count` (from
+    `probed["attachment_count"]`) has to be threaded through to land the
+    metadata on the right stream."""
+    cover_image_path = Path(cover_image_path)
+    mimetype = _IMAGE_MIMETYPES.get(cover_image_path.suffix.lower(), "image/jpeg")
+    new_index = existing_attachment_count
+    return [
+        "-attach",
+        str(cover_image_path),
+        f"-metadata:s:t:{new_index}",
+        "mimetype=" + mimetype,
+        f"-metadata:s:t:{new_index}",
+        "filename=cover" + cover_image_path.suffix.lower(),
+    ]
 
 
 def _disposition_args(stream_type: str, count: int) -> list[str]:

@@ -21,6 +21,31 @@ from .probe import probe_file
 DECODE_SPOT_CHECK_SECONDS = 3
 DEFAULT_PROGRESS_INTERVAL = 10.0  # seconds between throttled progress lines to stdout
 
+# Conventional poster/cover filenames -- checked in this order next to the
+# source video. "poster.jpg" is what media-organizer's `run` itself leaves
+# behind once a movie is identified (see
+# skills/media-organizer/reference/naming-conventions.md); the rest are the
+# same file under Plex/Jellyfin/Kodi's other common names. No network
+# lookup happens here -- av1-transcode doesn't gain a TMDB dependency for
+# this, it only ever uses whatever's already sitting on disk.
+_COVER_ART_FILENAMES = (
+    "poster.jpg",
+    "poster.png",
+    "cover.jpg",
+    "cover.png",
+    "folder.jpg",
+    "folder.png",
+)
+
+
+def find_sidecar_cover(video_path: Path) -> Path | None:
+    for name in _COVER_ART_FILENAMES:
+        candidate = video_path.parent / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 _PROGRESS_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.\d+.*speed=\s*([\d.]+)x")
 # ffmpeg's periodic stats line always starts this way, even before it has a
 # resolved time/speed to report (early frames print "time=N/A speed=N/A"
@@ -203,16 +228,27 @@ def transcode_one(
     drop_subtitles: bool = False,
     audio_lang: str = langfilter.ALL,
     subtitle_lang: str = langfilter.ALL,
+    single_audio_track: bool = True,
     max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
     output_dir: Path | None = None,
+    cover_image_path: Path | None = None,
+    auto_cover_art: bool = True,
     on_progress: Callable[[str], None] | None = None,
 ) -> tuple[TranscodeResult, dict | None]:
     """When `output_dir` is set, the converted file is written there
     (mirroring `abs_path`'s path relative to `root`) and the original source
     is left completely untouched -- no backup/delete step at all, since
     nothing about the source changed. `backup_dir` only applies to the
-    default in-place mode, where the source *is* replaced."""
+    default in-place mode, where the source *is* replaced.
+
+    Cover art: `cover_image_path` forces a specific image; otherwise, if
+    `auto_cover_art` (the default), `find_sidecar_cover` looks for a
+    conventional poster/cover file next to `abs_path` and uses that if
+    found. Neither happening (no override, nothing found, or
+    `auto_cover_art=False`) just means no cover is embedded -- never an
+    error."""
     rel = abs_path.relative_to(root)
+    resolved_cover = cover_image_path or (find_sidecar_cover(abs_path) if auto_cover_art else None)
     try:
         probed = probe_file(abs_path)
     except Exception as exc:
@@ -240,11 +276,13 @@ def transcode_one(
             probed,
             preset,
             backend,
-            gpu_index,
-            drop_subtitles,
-            audio_lang,
-            subtitle_lang,
-            max_bitrate_fraction,
+            gpu_index=gpu_index,
+            drop_subtitles=drop_subtitles,
+            audio_lang=audio_lang,
+            subtitle_lang=subtitle_lang,
+            single_audio_track=single_audio_track,
+            max_bitrate_fraction=max_bitrate_fraction,
+            cover_image_path=resolved_cover,
         )
         detail = " ".join(str(c) for c in cmd)
         return TranscodeResult(str(rel), "planned", detail), probed
@@ -262,11 +300,13 @@ def transcode_one(
             probed,
             preset,
             backend,
-            gpu_index,
-            drop_subtitles,
-            audio_lang,
-            subtitle_lang,
-            max_bitrate_fraction,
+            gpu_index=gpu_index,
+            drop_subtitles=drop_subtitles,
+            audio_lang=audio_lang,
+            subtitle_lang=subtitle_lang,
+            single_audio_track=single_audio_track,
+            max_bitrate_fraction=max_bitrate_fraction,
+            cover_image_path=resolved_cover,
         )
         returncode, tail = stream_ffmpeg(
             cmd, log_path, probed["format"].get("duration"), on_progress=on_progress

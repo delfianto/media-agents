@@ -38,6 +38,7 @@ def probe_file(path: str | Path) -> dict:
     video = None
     audio = []
     subtitles = []
+    attachment_count = 0
     for s in data.get("streams", []):
         codec_type = s.get("codec_type")
         disposition = s.get("disposition", {}) or {}
@@ -46,13 +47,9 @@ def probe_file(path: str | Path) -> dict:
         elif codec_type == "audio":
             audio.append(_normalize_audio(s))
         elif codec_type == "subtitle":
-            subtitles.append(
-                {
-                    "index": s.get("index"),
-                    "codec_name": s.get("codec_name"),
-                    "language": (s.get("tags") or {}).get("language"),
-                }
-            )
+            subtitles.append(_normalize_subtitle(s))
+        elif codec_type == "attachment":
+            attachment_count += 1
 
     return {
         "path": str(path),
@@ -64,6 +61,7 @@ def probe_file(path: str | Path) -> dict:
         "video": video,
         "audio": audio,
         "subtitles": subtitles,
+        "attachment_count": attachment_count,
     }
 
 
@@ -91,13 +89,32 @@ def _normalize_video(s: dict) -> dict:
 
 
 def _normalize_audio(s: dict) -> dict:
+    tags = s.get("tags", {}) or {}
     return {
         "index": s.get("index"),
         "codec_name": s.get("codec_name"),
+        "profile": s.get("profile"),
         "channels": s.get("channels") or 2,
         "channel_layout": s.get("channel_layout"),
-        "bit_rate": _to_int(s.get("bit_rate")),
-        "language": (s.get("tags") or {}).get("language"),
+        # ffprobe's own bit_rate field is frequently absent for VBR lossless
+        # codecs (TrueHD in particular) since there's no single header value
+        # to report -- the container's own BPS tag (the same fallback
+        # media-library's scan.py uses) fills that gap.
+        "bit_rate": _to_int(s.get("bit_rate")) or _to_int(tags.get("BPS")),
+        "language": tags.get("language"),
+        "title": tags.get("title"),
+    }
+
+
+def _normalize_subtitle(s: dict) -> dict:
+    tags = s.get("tags", {}) or {}
+    disposition = s.get("disposition", {}) or {}
+    return {
+        "index": s.get("index"),
+        "codec_name": s.get("codec_name"),
+        "language": tags.get("language"),
+        "title": tags.get("title"),
+        "hearing_impaired": bool(disposition.get("hearing_impaired")),
     }
 
 

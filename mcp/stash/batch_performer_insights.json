@@ -1,0 +1,1 @@
+{"name":"batch_performer_insights","description":"Generates insights for multiple performers with detailed progress","parameters":{"properties":{"max_performers":{"default":10,"title":"Max Performers","type":"integer"},"performer_names":{"items":{"type":"string"},"title":"Performer Names","type":"array"}},"required":["performer_names"],"type":"object"}}

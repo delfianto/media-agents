@@ -1,12 +1,6 @@
 # media-agents
 
-Companion skills for an LLM to inspect and maintain a self-hosted Plex media library --
-codec/language statistics, stripping non-English audio and subtitle tracks, fixing
-codec-level playback incompatibilities (e.g. DTS muted over eARC on some TVs),
-shrinking ultra-high-bitrate Blu-ray remuxes to AV1 + Opus, and identifying/renaming/
-organizing downloaded media into a Plex/Jellyfin library layout -- all via
-`ffprobe`/`ffmpeg`/`mkvmerge`/TMDB/OpenSubtitles, with your supervision at every
-destructive step.
+Companion skills for an LLM to inspect and maintain a self-hosted Plex media library -- codec/language statistics, stripping non-English audio and subtitle tracks, fixing codec-level playback incompatibilities (e.g. DTS muted over eARC on some TVs), shrinking ultra-high-bitrate Blu-ray remuxes to AV1 + Opus, and identifying/renaming/organizing downloaded media into a Plex/Jellyfin library layout -- all via `ffprobe`/`ffmpeg`/`mkvmerge`/TMDB/OpenSubtitles, with your supervision at every destructive step.
 
 ## Skills
 
@@ -17,5 +11,4 @@ destructive step.
 | **`media-organizer`** | [`skills/media-organizer`](skills/media-organizer) | The FileBot job without a FileBot license: identifies inbox video files via TMDB, renames/moves them into a Plex- or Jellyfin-standard layout, and fetches posters/fanart/NFO metadata and OpenSubtitles subtitles -- `.env`-configured, confidence-gated matching (no safe fallback for a misidentified file, so low-confidence matches are left for manual review), safe for unattended/automated-harness use. |
 | **`stash-app`** | [`skills/stash-app`](skills/stash-app) | Organizes, tags, and browses a local [Stash](https://github.com/stashapp/stash) media server (performers, scenes, tags) via the `stash-mcp` MCP server -- prompt-only, no Python harness. See `mcp_config.json`/`mcp/stash/` for the MCP server config and tool schemas it depends on. |
 
-See `AGENTS.md` for repo conventions (linting, typing, and test requirements for any
-`skills/<name>/scripts/*.py`).
+See `AGENTS.md` for repo conventions (linting, typing, and test requirements for any `skills/<name>/scripts/*.py`).

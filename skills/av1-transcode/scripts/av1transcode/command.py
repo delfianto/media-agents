@@ -1,13 +1,18 @@
-"""Build the ffmpeg command line for one file: `-map 0` (video, audio,
-subtitles, and font/attachment streams all carried through), video re-encoded
-to AV1 (libsvtav1 or av1_nvenc per `backend`), every audio track re-encoded to
-Opus at a bitrate scaled to its channel count, subtitles/attachments/chapters/
-metadata stream-copied untouched.
+"""Build the ffmpeg command line for one file: video re-encoded to AV1
+(libsvtav1 or av1_nvenc per `backend`, capped to a fraction of the source's
+own bitrate -- see presets.MAX_BITRATE_FRACTION_OF_SOURCE), audio tracks
+matching `audio_lang` re-encoded to Opus (falling back to every track if
+none match), subtitle tracks matching `subtitle_lang` stream-copied,
+fonts/attachments always kept, chapters/metadata stream-copied untouched.
+
+Streams are mapped explicitly by index (not a blanket `-map 0`) so a source
+cover-art "video" stream never gets swept into the AV1 encode alongside the
+real one, and so language filtering has something precise to filter.
 """
 
 from pathlib import Path
 
-from . import colorinfo, presets
+from . import colorinfo, langfilter, presets
 
 # scd=1 (scene change detection): keyframes land on actual cuts rather than
 # only the fixed GOP interval, a plain efficiency win with no quality
@@ -25,6 +30,9 @@ def build_command(
     backend: str,
     gpu_index: int | None = None,
     drop_subtitles: bool = False,
+    audio_lang: str = langfilter.ALL,
+    subtitle_lang: str = langfilter.ALL,
+    max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
 ) -> list[str]:
     video = probed.get("video")
     if video is None:
@@ -32,23 +40,30 @@ def build_command(
 
     hdr = colorinfo.is_hdr(video)
     dolby_vision = colorinfo.has_dolby_vision(video)
+    cap_bps = (
+        presets.max_bitrate_bps(probed, max_bitrate_fraction)
+        if max_bitrate_fraction is not None
+        else None
+    )
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-nostdin",
-        "-i",
-        str(input_path),
-        "-map",
-        "0",
-        "-map_metadata",
-        "0",
-        "-map_chapters",
-        "0",
-    ]
+    kept_audio, _audio_fallback = langfilter.filter_audio(probed.get("audio", []), audio_lang)
+    kept_subtitles = (
+        []
+        if drop_subtitles
+        else langfilter.filter_subtitles(probed.get("subtitles", []), subtitle_lang)
+    )
+
+    cmd = ["ffmpeg", "-y", "-nostdin", "-i", str(input_path)]
+    cmd += ["-map", f"0:{video['index']}"]
+    for s in kept_audio:
+        cmd += ["-map", f"0:{s['index']}"]
+    for s in kept_subtitles:
+        cmd += ["-map", f"0:{s['index']}"]
+    cmd += ["-map", "0:t?"]  # font/attachment streams, if any -- never filtered
+    cmd += ["-map_metadata", "0", "-map_chapters", "0"]
 
     if backend == "cpu":
-        cmd += _svtav1_video_args(video, preset, hdr, dolby_vision)
+        cmd += _svtav1_video_args(video, preset, hdr, dolby_vision, cap_bps)
     elif backend == "nvenc":
         if dolby_vision:
             raise ValueError(
@@ -57,7 +72,7 @@ def build_command(
             )
         if gpu_index is None:
             raise ValueError("nvenc backend requested but no AV1-capable GPU is available")
-        cmd += _nvenc_video_args(preset, gpu_index)
+        cmd += _nvenc_video_args(preset, gpu_index, cap_bps)
     else:
         raise ValueError(f"unknown backend {backend!r}, expected 'cpu' or 'nvenc'")
 
@@ -72,19 +87,37 @@ def build_command(
     if video.get("color_space"):
         cmd += ["-colorspace", video["color_space"]]
 
-    cmd += _audio_args(probed.get("audio", []))
+    cmd += _audio_args(kept_audio)
+    cmd += _disposition_args("a", len(kept_audio))
 
-    if drop_subtitles:
-        cmd += ["-sn"]
-    else:
-        cmd += ["-c:s", "copy", "-c:t", "copy"]
+    if kept_subtitles:
+        cmd += ["-c:s", "copy"]
+        cmd += _disposition_args("s", len(kept_subtitles))
+    cmd += ["-c:t", "copy"]
 
     cmd.append(str(output_path))
     return cmd
 
 
+def _disposition_args(stream_type: str, count: int) -> list[str]:
+    """Mark the first kept stream of this type as the player's default and
+    explicitly clear the rest, so exactly one track auto-selects on
+    playback -- rather than leaving it to whatever (possibly stale or
+    wrong) disposition flags the source happened to carry."""
+    if count == 0:
+        return []
+    args = [f"-disposition:{stream_type}:0", "default"]
+    for i in range(1, count):
+        args += [f"-disposition:{stream_type}:{i}", "0"]
+    return args
+
+
 def _svtav1_video_args(
-    video: dict, preset: presets.Preset, hdr: bool, dolby_vision: bool
+    video: dict,
+    preset: presets.Preset,
+    hdr: bool,
+    dolby_vision: bool,
+    max_bitrate_bps: int | None,
 ) -> list[str]:
     params = dict(_BASE_SVT_PARAMS)
     params.update(preset.svt_extra)
@@ -93,6 +126,11 @@ def _svtav1_video_args(
         params["film-grain"] = str(preset.film_grain)
     if hdr:
         params.update(colorinfo.svtav1_hdr_params(video))
+    if max_bitrate_bps:
+        # SvtAv1EncApp's --mbr wants kbps; setting it alongside --crf puts
+        # the encoder in "Capped CRF" mode (confirmed via its own startup
+        # log: "BRC mode ... capped CRF").
+        params["mbr"] = str(max_bitrate_bps // 1000)
 
     args = [
         "-c:v",
@@ -114,7 +152,9 @@ def _svtav1_video_args(
     return args
 
 
-def _nvenc_video_args(preset: presets.Preset, gpu_index: int) -> list[str]:
+def _nvenc_video_args(
+    preset: presets.Preset, gpu_index: int, max_bitrate_bps: int | None
+) -> list[str]:
     args = [
         "-c:v",
         "av1_nvenc",
@@ -145,6 +185,12 @@ def _nvenc_video_args(preset: presets.Preset, gpu_index: int) -> list[str]:
         "-pix_fmt",
         "p010le",
     ]
+    if max_bitrate_bps:
+        # "Capped VBR": -cq still drives quality, -maxrate/-bufsize just
+        # clamp the ceiling. Confirmed directly: uncapped CQ=22 on a real
+        # clip produced ~17.9 Mbps; adding -maxrate 4M -bufsize 8M brought
+        # it down to ~4.4 Mbps.
+        args += ["-maxrate", str(max_bitrate_bps), "-bufsize", str(max_bitrate_bps * 2)]
     for key, value in preset.nvenc_extra.items():
         args += [f"-{key}", value]
     return args

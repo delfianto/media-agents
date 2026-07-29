@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO
 
-from . import colorinfo, presets
+from . import colorinfo, langfilter, presets
 from . import command as command_mod
 from .probe import probe_file
 
@@ -201,8 +201,17 @@ def transcode_one(
     execute: bool,
     log_dir: Path,
     drop_subtitles: bool = False,
+    audio_lang: str = langfilter.ALL,
+    subtitle_lang: str = langfilter.ALL,
+    max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
+    output_dir: Path | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> tuple[TranscodeResult, dict | None]:
+    """When `output_dir` is set, the converted file is written there
+    (mirroring `abs_path`'s path relative to `root`) and the original source
+    is left completely untouched -- no backup/delete step at all, since
+    nothing about the source changed. `backup_dir` only applies to the
+    default in-place mode, where the source *is* replaced."""
     rel = abs_path.relative_to(root)
     try:
         probed = probe_file(abs_path)
@@ -220,12 +229,22 @@ def transcode_one(
 
     hdr = colorinfo.is_hdr(video)
     preset = presets.select_preset(video["height"], profile, hdr)
-    final_path = abs_path.with_suffix(".mkv")
+    final_path = (
+        (output_dir / rel).with_suffix(".mkv") if output_dir else abs_path.with_suffix(".mkv")
+    )
 
     if not execute:
-        preview_out = abs_path.with_name(abs_path.stem + ".av1-preview.mkv")
         cmd = command_mod.build_command(
-            abs_path, preview_out, probed, preset, backend, gpu_index, drop_subtitles
+            abs_path,
+            final_path,
+            probed,
+            preset,
+            backend,
+            gpu_index,
+            drop_subtitles,
+            audio_lang,
+            subtitle_lang,
+            max_bitrate_fraction,
         )
         detail = " ".join(str(c) for c in cmd)
         return TranscodeResult(str(rel), "planned", detail), probed
@@ -238,7 +257,16 @@ def transcode_one(
 
     try:
         cmd = command_mod.build_command(
-            abs_path, tmp_path, probed, preset, backend, gpu_index, drop_subtitles
+            abs_path,
+            tmp_path,
+            probed,
+            preset,
+            backend,
+            gpu_index,
+            drop_subtitles,
+            audio_lang,
+            subtitle_lang,
+            max_bitrate_fraction,
         )
         returncode, tail = stream_ffmpeg(
             cmd, log_path, probed["format"].get("duration"), on_progress=on_progress
@@ -255,15 +283,32 @@ def transcode_one(
             tmp_path.unlink(missing_ok=True)
             return TranscodeResult(str(rel), "error", f"verification failed: {detail}"), probed
 
-        if backup_dir is not None:
-            backup_path = Path(backup_dir) / rel
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(abs_path), str(backup_path))
+        if output_dir is not None:
+            # A different location entirely, and the source is never
+            # touched -- final_path can never legitimately already exist as
+            # "the thing about to be replaced" the way it can in-place, so
+            # check before doing anything rather than after.
+            if final_path.exists():
+                tmp_path.unlink(missing_ok=True)
+                return (
+                    TranscodeResult(str(rel), "error", f"destination already exists: {final_path}"),
+                    probed,
+                )
+            final_path.parent.mkdir(parents=True, exist_ok=True)
         else:
-            abs_path.unlink()
+            if backup_dir is not None:
+                backup_path = Path(backup_dir) / rel
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(abs_path), str(backup_path))
+            else:
+                abs_path.unlink()
+            # Checked only *after* the original is moved/deleted: in-place
+            # mode's final_path can legitimately equal abs_path itself (a
+            # same-extension source), so checking beforehand would always
+            # "collide" with the very file about to be replaced.
+            if final_path.exists():
+                raise RuntimeError(f"{final_path} already exists, refusing to overwrite")
 
-        if final_path.exists():
-            raise RuntimeError(f"{final_path} already exists, refusing to overwrite")
         shutil.move(str(tmp_path), str(final_path))
         return TranscodeResult(str(rel), "changed", f"{backend}/{preset.name}: {detail}"), probed
     except Exception as exc:

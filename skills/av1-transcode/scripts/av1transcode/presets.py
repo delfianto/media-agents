@@ -31,6 +31,23 @@ PROFILES = ("film", "anime")
 # are also almost always the highest-value archival sources (4K UHD remuxes).
 HDR_QUALITY_BONUS = 2
 
+# CRF/CQ target a *quality level*, not a *size ceiling* -- on an
+# already-efficiently-encoded source (e.g. a deliberately bitrate-capped
+# x264 web encode, as opposed to a wasteful Blu-ray remux master), hitting
+# that quality bar can legitimately need more bits than the source itself
+# used, producing an output *larger* than the file this tool exists to
+# shrink. Real case that exposed this: a 3840x2160 x264 source capped at 15
+# Mbps (2-pass VBR, vbv_maxrate=43.2Mbps) ballooned past its own size partway
+# through the encode. Fixed with a hard ceiling tied to the source's own
+# video bitrate -- SVT-AV1's "Capped CRF" (`--mbr`) and NVENC's
+# `-maxrate`/`-bufsize` alongside `-cq`, both confirmed directly (see
+# reference/incidents.md) to clamp output bitrate to the ceiling. This is
+# purely a safety net for genuine Blu-ray remux sources (40-80+ Mbps 4K):
+# CRF/CQ-driven output there normally lands far under any reasonable
+# fraction of that, so the cap never binds -- it only engages exactly when
+# it needs to.
+MAX_BITRATE_FRACTION_OF_SOURCE = 0.85
+
 
 @dataclass(frozen=True)
 class Preset:
@@ -41,7 +58,7 @@ class Preset:
     svt_tune: int  # 0 = VQ, 1 = PSNR, 2 = SSIM (SvtAv1EncApp --tune)
     film_grain: int  # 0 = off
     svt_extra: dict[str, str] = field(default_factory=dict)
-    nvenc_preset: str = "p6"
+    nvenc_preset: str = "p7"
     nvenc_tune: str = "uhq"
     nvenc_cq: float = 26.0
     nvenc_extra: dict[str, str] = field(default_factory=dict)
@@ -83,7 +100,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         svt_tune=0,
         film_grain=10,
         svt_extra=_VARIANCE_BOOST,
-        nvenc_preset="p6",
+        nvenc_preset="p7",
         nvenc_tune="uhq",
         nvenc_cq=22,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "10"},
@@ -96,7 +113,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         svt_tune=1,
         film_grain=4,
         svt_extra=_ANIME_EXTRA,
-        nvenc_preset="p6",
+        nvenc_preset="p7",
         nvenc_tune="uhq",
         nvenc_cq=24,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "8"},
@@ -109,7 +126,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         svt_tune=0,
         film_grain=10,
         svt_extra=_VARIANCE_BOOST,
-        nvenc_preset="p6",
+        nvenc_preset="p7",
         nvenc_tune="uhq",
         nvenc_cq=26,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "10"},
@@ -122,7 +139,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         svt_tune=1,
         film_grain=4,
         svt_extra={**_ANIME_EXTRA, "tf-strength": "1"},
-        nvenc_preset="p6",
+        nvenc_preset="p7",
         nvenc_tune="uhq",
         nvenc_cq=27,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "8"},
@@ -135,7 +152,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         svt_tune=0,
         film_grain=8,
         svt_extra=_VARIANCE_BOOST,
-        nvenc_preset="p6",
+        nvenc_preset="p7",
         nvenc_tune="hq",
         nvenc_cq=28,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1"},
@@ -148,7 +165,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         svt_tune=1,
         film_grain=4,
         svt_extra=_ANIME_EXTRA,
-        nvenc_preset="p6",
+        nvenc_preset="p7",
         nvenc_tune="hq",
         nvenc_cq=29,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1"},
@@ -160,7 +177,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=28,
         svt_tune=0,
         film_grain=6,
-        nvenc_preset="p5",
+        nvenc_preset="p7",
         nvenc_tune="hq",
         nvenc_cq=30,
         nvenc_extra={"spatial-aq": "1"},
@@ -172,7 +189,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=28,
         svt_tune=1,
         film_grain=4,
-        nvenc_preset="p5",
+        nvenc_preset="p7",
         nvenc_tune="hq",
         nvenc_cq=31,
         nvenc_extra={"spatial-aq": "1"},
@@ -201,6 +218,36 @@ def select_preset(height: int, profile: str, hdr: bool) -> Preset:
     tier = resolution_tier(height)
     preset = PRESETS[(tier, profile)]
     return preset.with_hdr_bonus() if hdr else preset
+
+
+def source_video_bitrate_bps(probed: dict) -> int | None:
+    """Best-effort bits/sec figure for the source's own *video* stream, used
+    to derive a bitrate ceiling. Prefers the video stream's own tagged
+    bit_rate; falls back to the container's overall bit_rate (a slight
+    overestimate, since it includes audio too -- errs toward a looser cap,
+    never a tighter one), then to size/duration if neither is tagged."""
+    video = probed.get("video") or {}
+    if video.get("bit_rate"):
+        return video["bit_rate"]
+    fmt = probed.get("format") or {}
+    if fmt.get("bit_rate"):
+        return fmt["bit_rate"]
+    duration = fmt.get("duration")
+    size = fmt.get("size")
+    if duration and size:
+        return int(size * 8 / duration)
+    return None
+
+
+def max_bitrate_bps(probed: dict, fraction: float = MAX_BITRATE_FRACTION_OF_SOURCE) -> int | None:
+    """None means "no cap" (unknown source bitrate, or fraction<=0 -- the
+    caller's way to opt out entirely)."""
+    if fraction <= 0:
+        return None
+    source_bps = source_video_bitrate_bps(probed)
+    if source_bps is None:
+        return None
+    return int(source_bps * fraction)
 
 
 # (channels, kbps) anchors at the layouts with an actual community-consensus

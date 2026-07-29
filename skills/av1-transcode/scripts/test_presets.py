@@ -66,3 +66,40 @@ def test_opus_bitrate_unlisted_channel_count_interpolates_and_is_monotonic():
     values = [presets.opus_bitrate_kbps(c) for c in range(1, 13)]
     assert values == sorted(values)
     assert all(v <= presets._OPUS_MAX_KBPS for v in values)
+
+
+def test_source_video_bitrate_prefers_video_stream_bit_rate():
+    probed = {
+        "video": {"bit_rate": 15_000_000},
+        "format": {"bit_rate": 15_200_000, "duration": 100.0, "size": 190_000_000},
+    }
+    assert presets.source_video_bitrate_bps(probed) == 15_000_000
+
+
+def test_source_video_bitrate_falls_back_to_format_bit_rate():
+    probed = {"video": {}, "format": {"bit_rate": 15_200_000, "duration": 100.0, "size": 1}}
+    assert presets.source_video_bitrate_bps(probed) == 15_200_000
+
+
+def test_source_video_bitrate_falls_back_to_size_over_duration():
+    probed = {"video": {}, "format": {"duration": 100.0, "size": 187_500_000}}
+    assert presets.source_video_bitrate_bps(probed) == 15_000_000
+
+
+def test_source_video_bitrate_none_when_nothing_available():
+    assert presets.source_video_bitrate_bps({"video": {}, "format": {}}) is None
+
+
+def test_max_bitrate_bps_applies_fraction():
+    probed = {"video": {"bit_rate": 20_000_000}, "format": {}}
+    assert presets.max_bitrate_bps(probed, fraction=0.5) == 10_000_000
+
+
+def test_max_bitrate_bps_none_when_source_unknown():
+    assert presets.max_bitrate_bps({"video": {}, "format": {}}) is None
+
+
+def test_max_bitrate_bps_none_when_fraction_is_zero_or_negative():
+    probed = {"video": {"bit_rate": 20_000_000}, "format": {}}
+    assert presets.max_bitrate_bps(probed, fraction=0) is None
+    assert presets.max_bitrate_bps(probed, fraction=-1) is None

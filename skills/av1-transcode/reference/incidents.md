@@ -94,3 +94,67 @@ independent of whether a time/speed value has resolved yet -- while
 line with a computed percentage/ETA when one is derivable. Reconfirmed
 against the same clip: the `N/A` period now throttles at the same interval
 as the rest of the encode.
+
+## CRF/CQ-only encoding produced a file *larger* than the source
+
+**What happened:** reported directly by the user against a real file from a
+different (non-Blu-ray-remux) library: a 3840x2160 x264 source, deliberately
+bitrate-capped to 15 Mbps (2-pass VBR, `vbv_maxrate=43.2Mbps` -- MediaInfo
+confirmed this exactly), was already larger than its own source size by 70%
+through the encode. Every preset here was tuned against Blu-ray *remux*
+sources (40-80+ Mbps 4K masters, wastefully high for their actual content
+complexity) where AV1 at CRF/CQ 20-22 undercuts the original easily. CRF/CQ
+target a *quality level*, not a *size ceiling* -- fed an already-efficiently-
+encoded source instead, hitting that same quality bar can legitimately need
+more bits than the source itself used. `verify_output()` already had a
+"larger than source" check, but only as a post-hoc warning *after* the
+wasted encode -- there was no ceiling anywhere in the actual encode path.
+
+**Fix:** every encode now caps output video bitrate to a fraction
+(`presets.MAX_BITRATE_FRACTION_OF_SOURCE`, default 0.85) of the *source's
+own* video bitrate -- SVT-AV1's "Capped CRF" mode (`--mbr`, alongside
+`--crf`) and NVENC's `-maxrate`/`-bufsize` (alongside `-cq`). Both mechanisms
+confirmed directly against real clips before shipping: uncapped NVENC CQ=22
+on a real 4K clip produced ~17.9 Mbps, `-maxrate 4M -bufsize 8M` brought it
+to ~4.4 Mbps; SVT-AV1's own startup log explicitly names the mode
+(`BRC mode ... capped CRF`) once `mbr` is set. Re-ran end-to-end against a
+fresh 20s extract of the exact file that exposed the bug (same library,
+`ffmpeg -c copy` extract, never touching the real file) -- output landed at
+90% of source size instead of exceeding it. This is a safety net, not a
+guarantee of dramatic savings on already-tight sources: on a genuine
+wasteful Blu-ray remux the cap essentially never binds, since CRF/CQ-driven
+output lands far under it anyway.
+
+## `-map 0` was quietly including cover-art "video" streams in the AV1 encode
+
+**Side finding while fixing the bitrate cap:** adding per-stream language
+filtering required switching from a blanket `-map 0` to mapping specific
+stream indices, which surfaced a latent issue in the old blanket-map
+approach: a source with an embedded cover-art image (a second, `attached_pic`
+"video" stream) would have had `-c:v` apply to *both* streams, running the
+cover art through AV1 encoding alongside the real video. `probe.py` already
+excludes `attached_pic` streams when picking the *primary* video stream, but
+the old command-building code mapped every stream anyway. Now only
+`probed["video"]["index"]` is ever mapped as video -- cover art is dropped
+entirely (Plex/Jellyfin use `poster.jpg`/`fanart.jpg` files, not embedded
+cover art, so nothing is lost).
+
+## NVENC preset p6 vs p7: no measured speed difference on this hardware
+
+**What happened:** every preset defaulted to NVENC `-preset p6`, on the
+unverified assumption (carried over from the general "higher preset number
+= slower" intuition that holds for most encoders' preset ladders) that `p7`
+would cost meaningfully more time for little quality gain -- written up that
+way in `reference/presets.md` without ever actually measuring it.
+
+**Fix:** measured directly on this machine's RTX 4080 -- the same 12s 4K
+clip, same `cq`/`tune`/AQ settings, encoded 4 times alternating `p6`/`p7`.
+Results: both took ~10s wall-clock (no measurable difference once past a
+one-off cold-start outlier on the very first run), and `p7` produced a
+marginally *smaller* file at the same `cq`. Switched every preset's
+`nvenc_preset` to `p7` (including the "sd" tier, previously `p5` -- if the
+most expensive resolution shows no penalty, a cheaper one won't either).
+This was measured only on this specific GPU/driver combination
+(Ada Lovelace, driver 610.43.03); if this skill ever runs on meaningfully
+different NVENC hardware, it'd be worth re-measuring rather than assuming
+the same holds.

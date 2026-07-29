@@ -65,10 +65,16 @@ Lovelace, AV1 encode-capable; an RTX 3060 at index 1, Ampere, decode-only).
 
 ## GPU (av1_nvenc)
 
-- **preset p6, tune uhq**: the highest quality settings this SDK generation
-  exposes short of lossless (`p7`/`uhq` exists too; `p6` was picked as the
-  practical ceiling — `p7` buys little on top of `p6` for a large speed cost,
-  the same shape as CPU preset 3 vs 4).
+- **preset p7, tune uhq**: the highest quality settings this SDK generation
+  exposes short of lossless. Originally defaulted to `p6` on the unverified
+  assumption that `p7` cost meaningfully more time for little gain (the
+  general "higher preset number = slower" intuition, true for most
+  encoders' preset ladders) — measured directly instead (see
+  `reference/incidents.md`): on this machine's RTX 4080, `p6` and `p7` take
+  identical wall-clock time, and `p7` comes out marginally *smaller* at the
+  same `cq`. No reason not to use it. Only measured on this specific
+  GPU/driver; worth re-measuring if this ever runs on different NVENC
+  hardware rather than assuming the same holds.
 - **rc vbr + cq + b:v 0**: the standard "quality-targeted VBR" NVENC recipe
   (constant-quality within VBR rate control, uncapped bitrate) rather than a
   fixed target bitrate — matches the CRF-style "quality first" goal instead
@@ -112,8 +118,75 @@ Lovelace, AV1 encode-capable; an RTX 3060 at index 1, Ampere, decode-only).
   auto-selects channel mapping family 1 (the one with surround
   masking/LFE-bandwidth handling) for anything above stereo, so there was
   nothing to override.
-- Every audio track gets transcoded, not just the default one — this skill
-  changes codecs, not track selection; track-level keep/drop policy (which
-  languages, which duplicates) is `media-library`'s job. Run that skill
-  first if a file also needs non-English/duplicate tracks stripped before
-  this one re-encodes what's left.
+- Every *matching-language* audio track gets transcoded (see "Language
+  filtering" below) — full nuanced track-selection policy (dropping
+  commentary tracks, SDH subtitles, trimming duplicate same-language tracks,
+  anime-release detection) is still `media-library`'s job, not this skill's.
+  Run that skill first for anything beyond a plain by-language keep/drop.
+
+## Bitrate ceiling (both backends)
+
+CRF/CQ target a *quality level*, not a *size ceiling*. That's fine for a
+genuine Blu-ray remux (40-80+ Mbps 4K, wastefully high for its actual
+complexity) but breaks down on an already-efficiently-encoded source: a
+real case (see `reference/incidents.md`) was a 3840x2160 x264 file
+deliberately bitrate-capped to 15 Mbps, where hitting this skill's quality
+target legitimately needed *more* bits than the source used, producing an
+output larger than the file the tool exists to shrink.
+
+Every encode now caps output video bitrate to
+`presets.MAX_BITRATE_FRACTION_OF_SOURCE` (default `0.85`) of the source's
+own video bitrate (`presets.source_video_bitrate_bps` — prefers the video
+stream's own tagged `bit_rate`, falls back to the container's overall
+bit_rate, then to `size*8/duration`):
+
+- **CPU (libsvtav1)**: `--mbr <kbps>` alongside `--crf` puts the encoder in
+  "Capped CRF" mode — confirmed via its own startup log
+  (`BRC mode ... capped CRF`) once `mbr` is set.
+- **NVENC**: `-maxrate`/`-bufsize` (bufsize = 2x maxrate) alongside `-cq`,
+  the standard "capped VBR" pattern — confirmed directly: uncapped `cq=22`
+  on a real clip produced ~17.9 Mbps; adding `-maxrate 4M -bufsize 8M`
+  brought it to ~4.4 Mbps.
+
+This is a safety net, not a target: on a genuine high-bitrate remux source
+the cap essentially never binds (CRF/CQ-driven output lands far under 85%
+of 40-80 Mbps anyway), so there's no quality cost in the common case.
+Override with `--max-bitrate-fraction` (or `AV1TRANSCODE_MAX_BITRATE_FRACTION`
+in `.env`), or disable entirely with `--no-bitrate-cap` for pure CRF/CQ.
+
+## Language filtering (both backends)
+
+`langfilter.py` does plain by-language keep/drop filtering for audio and
+subtitle tracks — deliberately simple (no commentary/SDH/anime-release
+nuance, that's still `media-library`'s job), added because the common case
+(keep the English track(s), drop the rest) is worth having directly in this
+skill's default behavior rather than requiring a separate pass first.
+
+- Default language is `eng` for both audio and subtitles
+  (`--audio-lang`/`--subtitle-lang`, or `AV1TRANSCODE_AUDIO_LANG`/
+  `AV1TRANSCODE_SUBTITLE_LANG` in `.env`); pass `all` to keep every track,
+  no filtering.
+- Audio has a safety net: if nothing matches the target language, every
+  original audio track is kept instead of producing a silent file — the
+  same "don't guess your way into no audio" principle as media-library's
+  `track_policy` fallback. Subtitles have no such guarantee (and don't need
+  one): a file with zero subtitle tracks is a completely normal outcome.
+- The first kept audio/subtitle track gets an explicit `default` disposition
+  flag (and every other kept track of that type gets explicitly cleared to
+  `0`), so a player auto-selects the right track regardless of what the
+  source's own (possibly stale) disposition flags said.
+- Switching to explicit per-index `-map` (needed to filter at all) replaced
+  the previous blanket `-map 0`, which also fixed a latent issue: a source
+  with embedded cover art (a second, `attached_pic`-flagged "video" stream)
+  would previously have had `-c:v` apply to *both* streams. Only
+  `probed["video"]["index"]` (the real, non-cover-art video stream `probe.py`
+  already identifies) is ever mapped as video now.
+
+## Output location
+
+Defaults to in-place (same swap-behind-a-backup model as
+media-library's `apply`). `--output-dir` (or `AV1TRANSCODE_OUTPUT_DIR`)
+writes the converted file to a separate directory instead, mirroring each
+source file's path relative to `--root` — in that mode the original source
+is never touched at all (no backup, no delete), since nothing about it
+changed.

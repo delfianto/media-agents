@@ -4,7 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import colorinfo, presets
+from . import colorinfo, config, langfilter, presets
 from . import gpu as gpu_mod
 from . import run as run_mod
 from .probe import probe_file
@@ -22,6 +22,12 @@ def _human_size(n: int | None) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024
     return f"{value:.1f} PB"
+
+
+def _resolve(cli_value, config_value):
+    """CLI flag wins if explicitly passed (argparse default is None for
+    these), else fall back to the resolved .env/environment config value."""
+    return cli_value if cli_value is not None else config_value
 
 
 def _walk_media_files(root: Path, path_filter: str | None = None, limit: int | None = None):
@@ -49,6 +55,10 @@ def _walk_media_files(root: Path, path_filter: str | None = None, limit: int | N
 
 def cmd_probe(args):
     root = Path(args.root)
+    cfg = config.load_config(args.env_file)
+    audio_lang = _resolve(args.audio_lang, cfg.audio_lang)
+    subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
+
     for abs_path in _walk_media_files(root, args.path, args.limit):
         rel = abs_path.relative_to(root)
         try:
@@ -66,15 +76,20 @@ def cmd_probe(args):
         dynamic_range = "Dolby Vision" if dv else ("HDR10" if hdr else "SDR")
         tier = presets.resolution_tier(video["height"])
         preset = presets.select_preset(video["height"], args.profile, hdr)
+        size_desc = _human_size(probed["format"].get("size"))
+
+        kept_audio, audio_fallback = langfilter.filter_audio(probed["audio"], audio_lang)
+        kept_subs = langfilter.filter_subtitles(probed["subtitles"], subtitle_lang)
         audio_desc = (
             ", ".join(
-                f"{a['codec_name']}/{a['channels']}ch -> "
+                f"{a['codec_name']}/{a['channels']}ch/{a.get('language') or 'und'} -> "
                 f"opus@{presets.opus_bitrate_kbps(a['channels'])}k"
-                for a in probed["audio"]
+                for a in kept_audio
             )
             or "(none)"
         )
-        size_desc = _human_size(probed["format"].get("size"))
+        dropped_audio = len(probed["audio"]) - len(kept_audio)
+        dropped_subs = len(probed["subtitles"]) - len(kept_subs)
 
         print(f"  {rel}")
         print(
@@ -82,7 +97,16 @@ def cmd_probe(args):
             f"{video.get('profile') or ''} {dynamic_range}  size={size_desc}"
         )
         print(f"      preset: {preset.name} -- {preset.description}")
-        print(f"      audio:  {audio_desc}")
+        audio_line = f"      audio:  {audio_desc}"
+        if audio_fallback:
+            audio_line += " (fallback: no track matched)"
+        print(audio_line)
+        if dropped_audio:
+            print(f"      audio-lang={audio_lang!r} drops {dropped_audio} track(s) not matching")
+        subtitle_line = f"      subtitles kept: {len(kept_subs)}"
+        if dropped_subs:
+            subtitle_line += f" (drops {dropped_subs} not matching subtitle-lang={subtitle_lang!r})"
+        print(subtitle_line)
         if dv:
             print("      note: Dolby Vision present -- `run` forces backend=cpu regardless")
             print("            of --backend (av1_nvenc cannot preserve DV RPU metadata)")
@@ -106,13 +130,28 @@ def cmd_list_presets(args):
         f"{presets.HDR_QUALITY_BONUS} automatically -- more bits for the same preset, "
         "since gradient banding is far more visible in HDR."
     )
+    print(
+        f"Output bitrate is additionally capped to {presets.MAX_BITRATE_FRACTION_OF_SOURCE:.0%} "
+        "of each source file's own bitrate by default (--max-bitrate-fraction / --no-bitrate-cap)."
+    )
 
 
 def cmd_run(args):
     root = Path(args.root)
+    cfg = config.load_config(args.env_file)
+
+    audio_lang = _resolve(args.audio_lang, cfg.audio_lang)
+    subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
+    output_dir_str = _resolve(args.output_dir, str(cfg.output_dir) if cfg.output_dir else None)
+    output_dir = Path(output_dir_str) if output_dir_str else None
+    if args.no_bitrate_cap:
+        max_bitrate_fraction = None
+    else:
+        max_bitrate_fraction = _resolve(args.max_bitrate_fraction, cfg.max_bitrate_fraction)
+
     backup_dir = (
         None
-        if args.no_backup
+        if args.no_backup or output_dir is not None
         else (args.backup_dir or str(root / ".cache" / "av1transcode" / "originals"))
     )
     log_dir = Path(args.log_dir or str(root / ".cache" / "av1transcode" / "logs"))
@@ -126,7 +165,7 @@ def cmd_run(args):
             )
             sys.exit(1)
 
-    if args.yes and backup_dir is None:
+    if args.yes and backup_dir is None and output_dir is None:
         print(
             "!! Running with --yes --no-backup: "
             "originals will be permanently deleted, not backed up."
@@ -149,6 +188,10 @@ def cmd_run(args):
             execute=args.yes,
             log_dir=log_dir,
             drop_subtitles=args.no_subtitles,
+            audio_lang=audio_lang,
+            subtitle_lang=subtitle_lang,
+            max_bitrate_fraction=max_bitrate_fraction,
+            output_dir=output_dir,
             on_progress=_print_progress if args.yes else None,
         )
         if result.status == "planned":
@@ -164,7 +207,9 @@ def cmd_run(args):
 
     mode = "APPLIED" if args.yes else "DRY RUN (pass --yes to execute for real)"
     print(f"\n[{mode}] changed={changed} planned={planned} errors={errors}")
-    if args.yes and backup_dir and changed:
+    if args.yes and output_dir:
+        print(f"Converted files written under: {output_dir}  (originals untouched)")
+    elif args.yes and backup_dir and changed:
         print(f"Originals of changed files were moved under: {backup_dir}")
     if args.yes:
         print(f"Per-file live logs under: {log_dir}  (tail -f <file> to watch progress in full)")
@@ -184,16 +229,40 @@ def cmd_purge_backups(args):
     print(f"Deleted {backup_dir} ({_human_size(size)} freed).")
 
 
+def _add_language_args(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--audio-lang",
+        default=None,
+        help="Keep only audio tracks matching this language (ISO 639-2, e.g. 'eng'; "
+        "or 'all' to keep every track). Default: 'eng', or AV1TRANSCODE_AUDIO_LANG "
+        "from .env. Falls back to keeping every track if none match (never produces "
+        "a silent file).",
+    )
+    sp.add_argument(
+        "--subtitle-lang",
+        default=None,
+        help="Keep only subtitle tracks matching this language (or 'all' for every "
+        "track). Default: 'eng', or AV1TRANSCODE_SUBTITLE_LANG from .env.",
+    )
+
+
 def build_parser(default_root: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="av1transcode", description="AV1 (libsvtav1/av1_nvenc) + Opus transcode toolkit"
     )
     p.add_argument("--root", default=default_root, help="Media library root")
+    p.add_argument(
+        "--env-file",
+        default=".env",
+        help="Path to an optional .env config file (AV1TRANSCODE_* keys; see .env.example). "
+        "Real environment variables always override it; explicit CLI flags override both.",
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     sp = sub.add_parser(
         "probe",
-        help="Read-only: report resolution/HDR/DV/audio and which preset+backend `run` would pick",
+        help="Read-only: report resolution/HDR/DV/audio/subtitles and which preset+backend "
+        "`run` would pick",
     )
     sp.add_argument(
         "--path", help="Only consider files whose relative path contains this substring"
@@ -205,6 +274,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         default=presets.DEFAULT_PROFILE,
         help="Content profile for preset selection (default: film)",
     )
+    _add_language_args(sp)
     sp.set_defaults(func=cmd_probe)
 
     sp = sub.add_parser("list-presets", help="Print the built-in resolution x profile preset table")
@@ -237,11 +307,20 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         help="Actually execute (default is a dry run that prints the ffmpeg command it would run)",
     )
     sp.add_argument(
+        "--output-dir",
+        default=None,
+        help="Write converted files here (mirroring each file's path relative to --root) "
+        "instead of swapping in place. When set, the original source is never touched -- "
+        "no backup/delete happens at all. Default: AV1TRANSCODE_OUTPUT_DIR from .env, or "
+        "in-place if neither is set.",
+    )
+    sp.add_argument(
         "--no-backup", action="store_true", help="Delete originals instead of backing them up"
     )
     sp.add_argument(
         "--backup-dir",
-        help="Where to move originals (default: <root>/.cache/av1transcode/originals)",
+        help="Where to move originals (default: <root>/.cache/av1transcode/originals) -- "
+        "ignored when --output-dir is set",
     )
     sp.add_argument(
         "--log-dir",
@@ -252,6 +331,21 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         action="store_true",
         help="Drop subtitle/attachment streams instead of copying them (use if the source "
         "container's subtitle codec can't mux into Matroska)",
+    )
+    _add_language_args(sp)
+    sp.add_argument(
+        "--max-bitrate-fraction",
+        type=float,
+        default=None,
+        help=f"Cap output video bitrate to this fraction of the source's own bitrate "
+        f"(default: {presets.MAX_BITRATE_FRACTION_OF_SOURCE}, or "
+        "AV1TRANSCODE_MAX_BITRATE_FRACTION from .env) -- the safety net against producing "
+        "a file larger than the source on already-efficiently-encoded input.",
+    )
+    sp.add_argument(
+        "--no-bitrate-cap",
+        action="store_true",
+        help="Disable the source-relative bitrate ceiling entirely (pure CRF/CQ, no maximum)",
     )
     sp.set_defaults(func=cmd_run)
 

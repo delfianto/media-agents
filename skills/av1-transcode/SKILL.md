@@ -9,11 +9,16 @@ description: >
     titles. Supports both a CPU path (libsvtav1, the highest-quality option,
     slow) and a GPU path (av1_nvenc, much faster, needs an Ada Lovelace or
     newer NVIDIA GPU) with live progress monitoring during the encode.
-    Triggers on phrases like "convert to AV1", "re-encode to AV1", "shrink
-    this remux", "transcode to AV1 and Opus", "use the GPU/NVENC to encode",
-    or any request to reduce the file size of a movie/show while preserving
-    quality (as opposed to media-library's track stripping, which changes
-    nothing about codecs).
+    Output bitrate is capped to a fraction of the source's own bitrate so it
+    can never end up larger than the original. Supports a separate
+    --output-dir instead of converting in place, default-eng audio/subtitle
+    language filtering (overridable per-track-language or disabled), and
+    optional persistent .env configuration for all of the above. Triggers on
+    phrases like "convert to AV1", "re-encode to AV1", "shrink this remux",
+    "transcode to AV1 and Opus", "use the GPU/NVENC to encode", or any
+    request to reduce the file size of a movie/show while preserving quality
+    (as opposed to media-library's track stripping, which changes nothing
+    about codecs).
 allowed-tools:
     - Bash
 metadata:
@@ -23,14 +28,16 @@ metadata:
 
 # av1-transcode
 
-Re-encodes video to AV1 and every audio track to Opus, for shrinking
-ultra-high-bitrate Blu-ray remuxes without giving up much (ideally any)
-visible quality. Unlike `media-library` - which only ever stream-copies
+Re-encodes video to AV1 and every matching-language audio track to Opus,
+for shrinking ultra-high-bitrate Blu-ray remuxes without giving up much
+(ideally any) visible quality, output bitrate capped to never exceed the
+source's own. Unlike `media-library` - which only ever stream-copies
 (remuxes track selection, never touches codecs) - this skill always
 re-encodes video, and is the slow/expensive/semi-destructive operation of
-the two. Run `media-library`'s `apply` first if a file also needs
-non-English/duplicate tracks or SDH subtitles dropped; there's no reason to
-spend encode time on streams that are about to be stripped anyway.
+the two. It does its own plain by-language audio/subtitle keep/drop
+(default `eng`, see "Language filtering and bitrate cap" below), but run
+`media-library`'s `apply` first if a file also needs the nuanced stuff
+(duplicate-track trimming, commentary/SDH dropping) that skill owns.
 
 The toolkit lives at `scripts/av1transcode.py` (next to this file), a
 zero-third-party-dependency Python package wrapping `ffprobe`/`ffmpeg`. See
@@ -71,9 +78,20 @@ python3 <path-to-this-skill>/scripts/av1transcode.py <subcommand> [options]
 
    # anime/cartoon sources: --profile is never auto-detected, see below
    python3 scripts/av1transcode.py run --path "Some Anime" --profile anime --yes
+
+   # write converted files elsewhere instead of swapping in place -- the
+   # source is never touched in this mode (no backup/delete either)
+   python3 scripts/av1transcode.py run --path "Some Movie" --output-dir /converted --yes
+
+   # keep every audio/subtitle track instead of the eng-only default
+   python3 scripts/av1transcode.py run --path "Some Movie" --audio-lang all --subtitle-lang all --yes
    ```
    Defaults: `--profile film`, `--backend auto` (GPU if an AV1-capable
-   NVIDIA GPU is found and the source has no Dolby Vision, else CPU).
+   NVIDIA GPU is found and the source has no Dolby Vision, else CPU),
+   `--audio-lang eng`, `--subtitle-lang eng`, output bitrate capped to 85%
+   of the source's own bitrate (see "Language filtering and bitrate cap"
+   below) - every one of these is overridable per-invocation via CLI flag or
+   persistently via `.env` (see "Configuration").
 
 4. **`purge-backups`** - Once re-encoded files have been spot-checked for
    playback/quality, permanently deletes the backed-up originals.
@@ -81,6 +99,39 @@ python3 <path-to-this-skill>/scripts/av1transcode.py <subcommand> [options]
    python3 scripts/av1transcode.py purge-backups         # shows size, asks for --yes
    python3 scripts/av1transcode.py purge-backups --yes    # actually deletes
    ```
+
+## Configuration (`.env`, optional)
+
+Everything is a CLI flag by default, but `--output-dir`, `--audio-lang`,
+`--subtitle-lang`, and `--max-bitrate-fraction` can also be set persistently
+via a `.env` file (copy `.env.example`, or point `--env-file` at one
+elsewhere) so they don't need retyping every invocation - useful for an
+automated/scheduled `run`. Precedence: explicit CLI flag > real environment
+variable > `.env` file > built-in default. This skill needs no external
+credentials, unlike `media-organizer`'s `.env` - every key here is a plain
+preference, so there's nothing required to fill in.
+
+## Language filtering and bitrate cap
+
+- **Audio/subtitles default to `eng`** (`--audio-lang`/`--subtitle-lang`,
+  or `all` to keep every track). This is a plain by-language keep/drop (no
+  commentary/SDH/anime-release nuance - that's still `media-library`'s
+  job), added directly here because "just keep English" is common enough to
+  not require a separate `media-library` pass first. Audio has a
+  never-go-silent fallback: if nothing matches, every original audio track
+  is kept instead. Subtitles have no such fallback (zero subtitles is a
+  normal outcome). The first kept track of each type gets an explicit
+  `default` disposition flag.
+- **Output video bitrate is capped to 85% of the source's own bitrate by
+  default** (`--max-bitrate-fraction`, or `--no-bitrate-cap` to disable).
+  CRF/CQ targets a *quality level*, not a *size ceiling* - fine for a
+  wastefully-high-bitrate Blu-ray remux, but an already-efficiently-encoded
+  source (e.g. a tightly bitrate-capped web encode) can legitimately need
+  *more* bits than the source used to hit that same quality bar, producing
+  an output larger than the file this tool exists to shrink. This actually
+  happened - see `reference/incidents.md` - and the cap is the fix, not just
+  a warning after the fact. On a genuine high-bitrate remux the cap
+  essentially never binds.
 
 ## Before running `--yes` against anything - always confirm scope with the user first
 
@@ -151,17 +202,21 @@ blocking on it.
   path>` by default, mirroring media-library's convention. Use
   `purge-backups` once re-encoded files are confirmed good. Pass
   `--no-backup` to delete originals immediately instead (verification still
-  gates it).
+  gates it). None of this applies when `--output-dir` is set - the source is
+  never touched at all in that mode, so there's nothing to back up.
 - Output is always `.mkv` regardless of the source container (AV1 in MP4
   works too, but MKV is this library's convention and handles font
   attachments/multiple subtitle tracks better) - a `.mp4` source ends up
   backed up under its original extension while the new file takes over the
-  same directory under a `.mkv` name.
-- Every audio/subtitle/attachment stream in the source is kept (only audio
-  *codec* changes; audio/subtitle track *selection* is media-library's job,
-  not this skill's) - pass `--no-subtitles` if a source subtitle codec can't
-  mux into Matroska (rare; surfaces as an `ffmpeg` error in the log if hit
-  without the flag).
+  same directory (or the mirrored `--output-dir` location) under a `.mkv`
+  name.
+- Audio/subtitle tracks matching `--audio-lang`/`--subtitle-lang` (default
+  `eng`) are kept and re-encoded/copied; attachments (fonts) are always
+  kept regardless. This is a plain by-language filter, not the nuanced
+  policy (commentary/SDH/anime-release detection) `media-library` owns -
+  run that skill first for anything beyond "just keep English". Pass
+  `--no-subtitles` to drop every subtitle track regardless of language (e.g.
+  if a source subtitle codec can't mux into Matroska).
 - Sequential by design, same as media-library's `apply`/`transcode` - no
   `--jobs` flag. An encode is CPU/GPU-bound rather than disk-bound the way a
   stream-copy remux is, but running two at once on the same GPU or the same
@@ -173,17 +228,23 @@ blocking on it.
 including HDR/Dolby Vision side-data extraction), `colorinfo.py` (pure HDR
 metadata parsing/formatting, CICP lookup tables), `presets.py` (the
 resolution x profile preset table plus `resolution_tier`/`select_preset`/
-`opus_bitrate_kbps`), `gpu.py` (capability-probed AV1 NVENC GPU detection),
-`command.py` (builds the actual `ffmpeg` argv for either backend),
-`run.py` (per-file orchestration: backend selection, live-streamed and
-persisted logging, verify, backup, swap - the same shape as media-library's
-`apply.py`'s `_execute_backend_plan`, sized for a job that runs hours rather
-than seconds), `cli.py` (argparse subcommands). `test_presets.py` and
-`test_colorinfo.py` cover the pure logic - run them (see `AGENTS.md` at the
-repo root for the lint/type-check/test commands) after touching either
-module. Any change to `presets.py`'s numbers or `command.py`'s argument
-lists should be smoke-tested against a real short clip (see
-`reference/incidents.md` for why - three of its four entries are bugs that
-only a real `ffmpeg` invocation against real hardware surfaced, not
-something code review or the unit tests alone would have caught) before
-being trusted as a new default.
+`opus_bitrate_kbps`/`source_video_bitrate_bps`/`max_bitrate_bps`),
+`langfilter.py` (pure by-language audio/subtitle keep/drop, with the
+audio never-go-silent fallback), `config.py` (optional `.env` loading,
+mirroring `media-organizer`'s pattern), `gpu.py` (capability-probed AV1
+NVENC GPU detection), `command.py` (builds the actual `ffmpeg` argv for
+either backend - explicit per-stream `-map`, language filtering,
+disposition flags, bitrate cap), `run.py` (per-file orchestration: backend
+selection, live-streamed and persisted logging, verify, backup-or-mirror-
+to-output-dir, swap - the same shape as media-library's `apply.py`'s
+`_execute_backend_plan`, sized for a job that runs hours rather than
+seconds), `cli.py` (argparse subcommands, CLI-flag/`.env`/default
+precedence via `_resolve()`). `test_presets.py`, `test_colorinfo.py`,
+`test_langfilter.py`, `test_config.py`, and `test_command.py` cover the pure
+logic - run them (see `AGENTS.md` at the repo root for the lint/type-check/
+test commands) after touching any of those modules. Any change to
+`presets.py`'s numbers or `command.py`'s argument lists should be
+smoke-tested against a real short clip (see `reference/incidents.md` for
+why - most of its entries are bugs that only a real `ffmpeg` invocation
+against real hardware surfaced, not something code review or the unit
+tests alone would have caught) before being trusted as a new default.

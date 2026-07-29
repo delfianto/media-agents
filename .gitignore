@@ -10,3 +10,7 @@ uv.lock
 
 # Secrets and environment keys
 .env
+
+# Direnv (machine specific)
+.envrc
+.direnv

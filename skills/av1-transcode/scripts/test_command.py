@@ -18,6 +18,7 @@ def _probed(*, video_bit_rate=None, audio=None, subtitles=None, attachment_count
             "mastering_display": None,
             "content_light": None,
             "dolby_vision": None,
+            "hdr10_plus": None,
         },
         "audio": audio or [],
         "subtitles": subtitles or [],

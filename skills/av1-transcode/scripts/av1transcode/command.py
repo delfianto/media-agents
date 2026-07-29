@@ -110,13 +110,13 @@ def build_command(
     cmd += ["-c:t", "copy"]
 
     if cover_image_path is not None:
-        cmd += _cover_art_args(cover_image_path, probed.get("attachment_count", 0))
+        cmd += cover_art_args(cover_image_path, probed.get("attachment_count", 0))
 
     cmd.append(str(output_path))
     return cmd
 
 
-def _cover_art_args(cover_image_path: str | Path, existing_attachment_count: int) -> list[str]:
+def cover_art_args(cover_image_path: str | Path, existing_attachment_count: int) -> list[str]:
     """A cover image is a real Matroska *attachment* (`-attach`), not a
     disposition-flagged video stream -- ffmpeg accepts `-disposition:v:N
     attached_pic` without error, but it's silently a no-op for MKV output

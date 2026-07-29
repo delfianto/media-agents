@@ -4,7 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import colorinfo, config, langfilter, presets
+from . import colorinfo, config, langfilter, nvencc_cmd, presets
 from . import gpu as gpu_mod
 from . import run as run_mod
 from .probe import probe_file
@@ -74,10 +74,25 @@ def cmd_probe(args):
 
         hdr = colorinfo.is_hdr(video)
         dv = colorinfo.has_dolby_vision(video)
-        dynamic_range = "Dolby Vision" if dv else ("HDR10" if hdr else "SDR")
+        hdr10_plus = colorinfo.has_hdr10_plus(video)
+        if dv:
+            dynamic_range = "Dolby Vision"
+        elif hdr10_plus:
+            dynamic_range = "HDR10+"
+        elif hdr:
+            dynamic_range = "HDR10"
+        else:
+            dynamic_range = "SDR"
         tier = presets.resolution_tier(video["height"])
         preset = presets.select_preset(video["height"], args.profile, hdr)
         size_desc = _human_size(probed["format"].get("size"))
+        nvencc_ok = nvencc_cmd.nvencc_available()
+        gpu_index = gpu_mod.detect_av1_nvenc_gpu()
+        try:
+            backend = run_mod.choose_backend(video, "auto", gpu_index, nvencc_ok=nvencc_ok)
+            engine = run_mod.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
+        except ValueError as exc:
+            backend, engine = "?", f"error: {exc}"
 
         kept_audio, audio_fallback = langfilter.filter_audio(
             probed["audio"], audio_lang, single=single_audio_track
@@ -100,6 +115,8 @@ def cmd_probe(args):
             f"{video.get('profile') or ''} {dynamic_range}  size={size_desc}"
         )
         print(f"      preset: {preset.name} -- {preset.description}")
+        nvencc_label = "yes" if nvencc_ok else "no"
+        print(f"      auto backend: {backend} via {engine}  (nvencc={nvencc_label})")
         audio_line = f"      audio:  {audio_desc}"
         if audio_fallback:
             audio_line += " (fallback: no track matched)"
@@ -112,9 +129,14 @@ def cmd_probe(args):
         print(subtitle_line)
         cover = run_mod.find_sidecar_cover(abs_path)
         print(f"      cover art: {cover if cover else '(none found)'}")
-        if dv:
-            print("      note: Dolby Vision present -- `run` forces backend=cpu regardless")
-            print("            of --backend (av1_nvenc cannot preserve DV RPU metadata)")
+        if dv and engine == "nvencc":
+            print("      note: Dolby Vision -- GPU path uses nvencc --dolby-vision-rpu copy")
+            print("            (profile 10.1). Pass --backend cpu for libsvtav1 -dolbyvision.")
+        elif dv and backend == "cpu":
+            print("      note: Dolby Vision -- nvencc not found; auto uses cpu/libsvtav1")
+            print("            so RPU is preserved. Install nvencc for GPU DV encodes.")
+        elif hdr10_plus and engine == "nvencc":
+            print("      note: HDR10+ -- GPU path uses nvencc --dhdr10-info copy")
 
 
 def cmd_list_presets(args):
@@ -315,8 +337,10 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         "--backend",
         choices=("auto", "cpu", "nvenc"),
         default="auto",
-        help="Encoder backend (default: auto -- nvenc if an AV1-capable GPU is found and the "
-        "source has no Dolby Vision, else cpu/libsvtav1)",
+        help="Encoder backend (default: auto -- nvenc/GPU if an AV1-capable NVIDIA GPU is "
+        "found, else cpu/libsvtav1). Dolby Vision and HDR10+ on GPU use nvencc (rigaya "
+        "NVEnc with libdovi) so RPU/dynamic metadata is preserved; without nvencc, DV "
+        "falls back to cpu. Plain SDR/HDR10 still uses ffmpeg av1_nvenc.",
     )
     sp.add_argument(
         "--yes",

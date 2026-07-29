@@ -68,6 +68,21 @@ def has_dolby_vision(video: dict) -> bool:
     return video.get("dolby_vision") is not None
 
 
+def has_hdr10_plus(video: dict) -> bool:
+    """True when ffprobe reported dynamic HDR10+ side data on the video stream.
+
+    Static HDR10 (PQ + mastering display) alone is not HDR10+ -- that path
+    is already handled by the plain ffmpeg HDR color tags / nvenc encode.
+    Dynamic metadata needs the nvencc `--dhdr10-info` path (or is lost)."""
+    return video.get("hdr10_plus") is not None
+
+
+def needs_dynamic_metadata_path(video: dict) -> bool:
+    """True when the GPU encode must go through nvencc (or CPU for DV) rather
+    than plain ffmpeg av1_nvenc, which drops Dolby Vision RPU and HDR10+ SEI."""
+    return has_dolby_vision(video) or has_hdr10_plus(video)
+
+
 def mastering_display_param(mastering_display: dict) -> str | None:
     """Build SVT-AV1's `--mastering-display G(x,y)B(x,y)R(x,y)WP(x,y)L(max,min)`
     value from ffprobe's "Mastering display metadata" side_data fields."""

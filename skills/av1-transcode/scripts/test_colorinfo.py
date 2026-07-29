@@ -63,6 +63,18 @@ def test_has_dolby_vision():
     assert colorinfo.has_dolby_vision({}) is False
 
 
+def test_has_hdr10_plus():
+    assert colorinfo.has_hdr10_plus({"hdr10_plus": {"side_data_type": "HDR10+"}}) is True
+    assert colorinfo.has_hdr10_plus({"hdr10_plus": None}) is False
+    assert colorinfo.has_hdr10_plus({}) is False
+
+
+def test_needs_dynamic_metadata_path():
+    assert colorinfo.needs_dynamic_metadata_path({"dolby_vision": {"dv_profile": 8}}) is True
+    assert colorinfo.needs_dynamic_metadata_path({"hdr10_plus": {}}) is True
+    assert colorinfo.needs_dynamic_metadata_path({"color_transfer": "smpte2084"}) is False
+
+
 def test_mastering_display_param_matches_svtav1_cli_format():
     value = colorinfo.mastering_display_param(REAL_MASTERING_DISPLAY)
     assert value is not None

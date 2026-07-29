@@ -10,20 +10,19 @@ playback incompatibilities. This file is the entry point for any coding agent wo
 ```
 README.md              skill catalog and usage overview
 pyproject.toml          ruff + basedpyright config for every Python script under skills/
-requirements.txt        shared runtime deps for scripts that need them (currently none -- stdlib only)
+requirements.txt        shared runtime deps for scripts that need them (guessit, for media-organizer)
 requirements-dev.txt    test-only deps (pytest) for skills that ship a test suite
 skills/<name>/SKILL.md         skill definition (frontmatter + instructions)
 skills/<name>/scripts/*.py     the Python harness code a skill invokes, where one exists
 skills/<name>/reference/*.md   supplementary docs (incident history, worked examples) SKILL.md points to rather than inlines
 ```
 
-`media-library` is the one skill here so far, and it's a proper multi-module package
-(`scripts/mediatools/`), not a single flat script like the simpler skills in sibling repos --
-codec/language track selection has enough interdependent logic (policy decisions, two mux
-backends, an audio transcode path, CLI) to warrant it. Don't force a future skill into a
-single-file shape it doesn't fit; `scripts/` can hold whatever internal structure the skill
-actually needs, same as `cosplay-metadata` in `lychee-agents` holds multiple scripts plus a
-`reference/` directory.
+Each skill (`media-library`, `av1-transcode`, `media-organizer`) is a proper multi-module
+package (`scripts/<pkg>/`), not a single flat script like the simpler skills in sibling repos --
+each has enough interdependent logic (policy decisions, multiple backends, external API
+clients, a CLI) to warrant it. Don't force a future skill into a single-file shape it doesn't
+fit; `scripts/` can hold whatever internal structure the skill actually needs, same as
+`cosplay-metadata` in `lychee-agents` holds multiple scripts plus a `reference/` directory.
 
 ## Code quality for Python harness scripts
 
@@ -61,6 +60,23 @@ basedpyright .
   pip install -r requirements.txt -r requirements-dev.txt
   pytest skills/<name>/scripts/
   ```
+  If there's no system `pip` (true on at least one machine this repo runs on -- `uv` is present
+  instead), use a local project venv pinned to match `pyproject.toml`'s `target-version` instead
+  of letting `uv` pick its own default (it'll happily pick an older interpreter than the code
+  actually needs -- see the next bullet):
+  ```bash
+  uv venv --python 3.14 && uv pip install -r requirements.txt -r requirements-dev.txt
+  .venv/bin/python3 -m pytest skills/<name>/scripts/
+  ```
+- **This codebase requires Python 3.14, not just "whatever the oldest dependency needs."**
+  `ruff format` (target-version `py314` in `pyproject.toml`) rewrites multi-exception `except`
+  clauses into Python 3.14's bare-comma grammar (`except A, B:` instead of `except (A, B):`) --
+  don't hand-fix these back to tuple-parens form, that's the formatter's deliberate, version-
+  appropriate output, not a leftover Python-2-ism. It also means anything with a `uv run`-style
+  PEP 723 inline script metadata block must pin `requires-python = ">=3.14"`, not a lower floor
+  that merely covers its own dependencies -- confirmed the hard way once already: an
+  under-pinned block let `uv run` silently provision 3.13, and the whole package failed to
+  import with a `SyntaxError` on exactly this except-clause form.
 
 ## Adding a new skill
 

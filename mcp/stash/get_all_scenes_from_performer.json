@@ -1,0 +1,1 @@
+{"name":"get_all_scenes_from_performer","description":"Return all scenes for a given performer","parameters":{"properties":{"organized_only":{"default":true,"title":"Organized Only","type":"boolean"},"performer_name":{"title":"Performer Name","type":"string"}},"required":["performer_name"],"type":"object"}}

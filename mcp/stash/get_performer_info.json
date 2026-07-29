@@ -1,0 +1,1 @@
+{"name":"get_performer_info","description":"Return detailed information for a single performer","parameters":{"properties":{"performer_name":{"title":"Performer Name","type":"string"}},"required":["performer_name"],"type":"object"}}

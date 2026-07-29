@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "stash-mcp-server": {
+      "command": "stash-mcp"
+    }
+  }
+}

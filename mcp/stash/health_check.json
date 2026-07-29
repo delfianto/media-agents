@@ -1,0 +1,1 @@
+{"name":"health_check","description":"Return basic health/connectivity information for the MCP server","parameters":{"properties":{},"type":"object"}}

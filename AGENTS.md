@@ -12,17 +12,20 @@ README.md              skill catalog and usage overview
 pyproject.toml          ruff + basedpyright config for every Python script under skills/
 requirements.txt        shared runtime deps for scripts that need them (guessit, for media-organizer)
 requirements-dev.txt    test-only deps (pytest) for skills that ship a test suite
+mcp_config.json         MCP server(s) this repo's skills expect to have configured (currently: stash-mcp-server)
+mcp/<server>/*.json     reference tool-call schemas for an MCP server named in mcp_config.json
 skills/<name>/SKILL.md         skill definition (frontmatter + instructions)
 skills/<name>/scripts/*.py     the Python harness code a skill invokes, where one exists
 skills/<name>/reference/*.md   supplementary docs (incident history, worked examples) SKILL.md points to rather than inlines
 ```
 
-Each skill (`media-library`, `av1-transcode`, `media-organizer`) is a proper multi-module
-package (`scripts/<pkg>/`), not a single flat script like the simpler skills in sibling repos --
-each has enough interdependent logic (policy decisions, multiple backends, external API
-clients, a CLI) to warrant it. Don't force a future skill into a single-file shape it doesn't
-fit; `scripts/` can hold whatever internal structure the skill actually needs, same as
-`cosplay-metadata` in `lychee-agents` holds multiple scripts plus a `reference/` directory.
+Each skill with real logic (`media-library`, `av1-transcode`, `media-organizer`) is a proper
+multi-module package (`scripts/<pkg>/`), not a single flat script -- each has enough
+interdependent logic (policy decisions, multiple backends, external API clients, a CLI) to
+warrant it. Don't force a future skill into a single-file shape it doesn't fit; `scripts/` can
+hold whatever internal structure the skill actually needs. Not every skill needs a `scripts/`
+directory at all -- `stash-app` (talks to a local Stash media server via the `stash-mcp` MCP
+server) is prompt/instruction-only.
 
 ## Code quality for Python harness scripts
 

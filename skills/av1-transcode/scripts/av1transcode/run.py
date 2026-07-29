@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO
 
-from . import colorinfo, langfilter, presets
+from . import colorinfo, langfilter, nvencc_cmd, presets
 from . import command as command_mod
 from .probe import probe_file
 
@@ -65,21 +65,60 @@ class TranscodeResult:
         self.detail = detail
 
 
-def choose_backend(video: dict, requested: str, gpu_index: int | None) -> str:
-    """Resolve 'auto' into 'cpu' or 'nvenc'. A Dolby Vision source always
-    forces 'cpu': av1_nvenc's full AVOptions listing has no equivalent of
-    libsvtav1's -dolbyvision RPU passthrough, so NVENC would silently encode
-    only the HDR10 base layer and drop DV metadata."""
-    if colorinfo.has_dolby_vision(video) and requested != "cpu":
-        if requested == "nvenc":
-            raise ValueError(
-                "source has Dolby Vision metadata; av1_nvenc would silently drop it "
-                "-- pass --backend cpu (libsvtav1 preserves it via RPU passthrough)"
-            )
+def choose_backend(
+    video: dict,
+    requested: str,
+    gpu_index: int | None,
+    nvencc_ok: bool | None = None,
+) -> str:
+    """Resolve 'auto' into 'cpu' or 'nvenc'.
+
+    Dolby Vision / HDR10+ cannot be preserved by plain ffmpeg `av1_nvenc`.
+    When `nvencc` is available those sources stay on the GPU path (NVEncC
+    attaches RPU / HDR10+). Without nvencc, DV falls back to CPU
+    (libsvtav1 `-dolbyvision`); forcing `--backend nvenc` on DV without
+    nvencc is an error rather than a silent metadata drop.
+    """
+    if nvencc_ok is None:
+        nvencc_ok = nvencc_cmd.nvencc_available()
+    needs_dyn = colorinfo.needs_dynamic_metadata_path(video)
+
+    if requested == "cpu":
         return "cpu"
-    if requested in ("cpu", "nvenc"):
-        return requested
-    return "nvenc" if gpu_index is not None else "cpu"
+    if requested == "nvenc":
+        if gpu_index is None:
+            raise ValueError("nvenc backend requested but no AV1-capable GPU is available")
+        if colorinfo.has_dolby_vision(video) and not nvencc_ok:
+            raise ValueError(
+                "source has Dolby Vision metadata; plain ffmpeg av1_nvenc would drop it "
+                "and nvencc was not found on PATH -- install nvencc (rigaya NVEnc) or "
+                "pass --backend cpu (libsvtav1 preserves RPU via -dolbyvision)"
+            )
+        return "nvenc"
+    # auto
+    if gpu_index is None:
+        return "cpu"
+    if needs_dyn and colorinfo.has_dolby_vision(video) and not nvencc_ok:
+        return "cpu"
+    return "nvenc"
+
+
+def choose_encode_engine(backend: str, video: dict, nvencc_ok: bool | None = None) -> str:
+    """Return 'ffmpeg' or 'nvencc' for the concrete encode tool.
+
+    Dynamic metadata on a GPU backend requires nvencc; everything else uses
+    the existing ffmpeg builders (libsvtav1 or av1_nvenc).
+    """
+    if nvencc_ok is None:
+        nvencc_ok = nvencc_cmd.nvencc_available()
+    if backend == "nvenc" and colorinfo.needs_dynamic_metadata_path(video):
+        if not nvencc_ok:
+            # HDR10+ without nvencc: fall through to ffmpeg (static HDR only).
+            # DV without nvencc should never reach here for explicit nvenc
+            # (choose_backend errors); auto already rewrote to cpu.
+            return "ffmpeg"
+        return "nvencc"
+    return "ffmpeg"
 
 
 def _iter_ffmpeg_lines(stream: IO[str]):
@@ -122,21 +161,26 @@ def _annotate_progress(line: str, total_duration: float | None) -> str:
     return f"[{pct:5.1f}% eta {eta_str}] {line}"
 
 
-def stream_ffmpeg(
+def stream_process(
     cmd: list[str],
     log_path: Path,
     total_duration: float | None,
     on_progress: Callable[[str], None] | None = None,
     min_progress_interval: float = DEFAULT_PROGRESS_INTERVAL,
 ) -> tuple[int, str]:
-    """Run `cmd`, writing every ffmpeg output line to `log_path` in real time
+    """Run `cmd`, writing every output line to `log_path` in real time
     (so `tail -f log_path` gives full-fidelity live monitoring regardless of
     how this function itself is invoked) while forwarding a throttled subset
     to `on_progress` -- every non-tick line (warnings, errors, the encoder's
     startup banner) immediately, periodic progress ticks at most once every
     `min_progress_interval` seconds so a caller capturing stdout wholesale
     (e.g. an agent running this via a shell tool) doesn't get flooded with
-    thousands of near-identical lines over a multi-hour encode."""
+    thousands of near-identical lines over a multi-hour encode.
+
+    Works for both ffmpeg and nvencc: only lines starting with `frame=` are
+    treated as throttled progress ticks (ffmpeg-style); nvencc's different
+    progress format is forwarded promptly as non-tick lines.
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     tail: list[str] = []
     proc = subprocess.Popen(
@@ -160,6 +204,10 @@ def stream_ffmpeg(
                 last_emit = now
     returncode = proc.wait()
     return returncode, "\n".join(tail)
+
+
+# Back-compat alias for any external callers/tests.
+stream_ffmpeg = stream_process
 
 
 def _decode_spot_check(path: Path, seconds: int = DECODE_SPOT_CHECK_SECONDS) -> tuple[bool, str]:
@@ -198,12 +246,23 @@ def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
             return False, f"duration mismatch: {orig_dur:.1f}s -> {new_dur:.1f}s"
 
     orig_video = original_probed.get("video") or {}
-    if colorinfo.is_hdr(orig_video):
-        new_video = new_probed["video"]
+    new_video = new_probed["video"]
+    # Dolby Vision first: nvencc's DV path often leaves container color_transfer /
+    # mastering-display tags empty even when RPU + DOVI config are present
+    # (confirmed on Dune Part One remux clip: PQ tags gone, rpu_present_flag=1,
+    # dv_profile=10). DV with RPU is sufficient proof of HDR retention.
+    if colorinfo.has_dolby_vision(orig_video) and not colorinfo.has_dolby_vision(new_video):
+        return False, "source had Dolby Vision but output is missing DOVI configuration record"
+    if colorinfo.is_hdr(orig_video) and not colorinfo.has_dolby_vision(new_video):
         if not colorinfo.is_hdr(new_video):
             return False, "source was HDR but output lost its PQ/HLG transfer characteristic"
         if orig_video.get("mastering_display") and not new_video.get("mastering_display"):
             return False, "source had mastering-display metadata but output is missing it"
+    if colorinfo.has_hdr10_plus(orig_video) and not colorinfo.has_hdr10_plus(new_video):
+        return (
+            False,
+            "source had HDR10+ dynamic metadata but output is missing it (ffprobe side_data)",
+        )
 
     ok, detail = _decode_spot_check(new_path)
     if not ok:
@@ -214,6 +273,83 @@ def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
     if orig_size and new_size and new_size > orig_size:
         return True, f"ok (warning: output {new_size}B > source {orig_size}B -- not smaller!)"
     return True, "ok"
+
+
+def _attach_cover_remux(video_path: Path, cover_image_path: Path) -> None:
+    """NVEncC does not take our Matroska -attach path; remux with ffmpeg to add cover."""
+    tmp = video_path.with_name(video_path.stem + ".cover-tmp.mkv")
+    probed = probe_file(video_path)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-nostdin",
+        "-i",
+        str(video_path),
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        *command_mod.cover_art_args(cover_image_path, probed.get("attachment_count", 0)),
+        str(tmp),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if proc.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"cover-art remux failed ({proc.returncode}): {(proc.stderr or '')[-500:]}"
+        )
+    tmp.replace(video_path)
+
+
+def build_encode_command(
+    abs_path: Path,
+    output_path: Path,
+    probed: dict,
+    preset: presets.Preset,
+    backend: str,
+    engine: str,
+    gpu_index: int | None,
+    drop_subtitles: bool,
+    audio_lang: str,
+    subtitle_lang: str,
+    single_audio_track: bool,
+    max_bitrate_fraction: float | None,
+    cover_image_path: Path | None,
+) -> list[str]:
+    """Dispatch to ffmpeg (command.py) or nvencc (nvencc_cmd.py).
+
+    Cover art is applied inside the ffmpeg command when engine is ffmpeg; for
+    nvencc the caller runs `_attach_cover_remux` after a successful encode.
+    """
+    if engine == "nvencc":
+        if gpu_index is None:
+            raise ValueError("nvencc encode requires a GPU index")
+        return nvencc_cmd.build_nvencc_command(
+            abs_path,
+            output_path,
+            probed,
+            preset,
+            gpu_index=gpu_index,
+            drop_subtitles=drop_subtitles,
+            audio_lang=audio_lang,
+            subtitle_lang=subtitle_lang,
+            single_audio_track=single_audio_track,
+            max_bitrate_fraction=max_bitrate_fraction,
+        )
+    return command_mod.build_command(
+        abs_path,
+        output_path,
+        probed,
+        preset,
+        backend,
+        gpu_index=gpu_index,
+        drop_subtitles=drop_subtitles,
+        audio_lang=audio_lang,
+        subtitle_lang=subtitle_lang,
+        single_audio_track=single_audio_track,
+        max_bitrate_fraction=max_bitrate_fraction,
+        cover_image_path=cover_image_path,
+    )
 
 
 def transcode_one(
@@ -258,8 +394,10 @@ def transcode_one(
     if video is None:
         return TranscodeResult(str(rel), "error", "no video stream found"), probed
 
+    nvencc_ok = nvencc_cmd.nvencc_available()
     try:
-        backend = choose_backend(video, backend_pref, gpu_index)
+        backend = choose_backend(video, backend_pref, gpu_index, nvencc_ok=nvencc_ok)
+        engine = choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
     except ValueError as exc:
         return TranscodeResult(str(rel), "error", str(exc)), probed
 
@@ -270,21 +408,24 @@ def transcode_one(
     )
 
     if not execute:
-        cmd = command_mod.build_command(
+        cmd = build_encode_command(
             abs_path,
             final_path,
             probed,
             preset,
             backend,
+            engine,
             gpu_index=gpu_index,
             drop_subtitles=drop_subtitles,
             audio_lang=audio_lang,
             subtitle_lang=subtitle_lang,
             single_audio_track=single_audio_track,
             max_bitrate_fraction=max_bitrate_fraction,
-            cover_image_path=resolved_cover,
+            cover_image_path=resolved_cover if engine == "ffmpeg" else None,
         )
         detail = " ".join(str(c) for c in cmd)
+        if engine == "nvencc" and resolved_cover is not None:
+            detail += f" && ffmpeg-cover-attach {resolved_cover}"
         return TranscodeResult(str(rel), "planned", detail), probed
 
     tmp_path = abs_path.with_name(f".{abs_path.stem}.av1transcode-tmp.mkv")
@@ -294,29 +435,34 @@ def transcode_one(
     log_path = log_dir / rel.with_suffix(".log")
 
     try:
-        cmd = command_mod.build_command(
+        cmd = build_encode_command(
             abs_path,
             tmp_path,
             probed,
             preset,
             backend,
+            engine,
             gpu_index=gpu_index,
             drop_subtitles=drop_subtitles,
             audio_lang=audio_lang,
             subtitle_lang=subtitle_lang,
             single_audio_track=single_audio_track,
             max_bitrate_fraction=max_bitrate_fraction,
-            cover_image_path=resolved_cover,
+            cover_image_path=resolved_cover if engine == "ffmpeg" else None,
         )
-        returncode, tail = stream_ffmpeg(
+        returncode, tail = stream_process(
             cmd, log_path, probed["format"].get("duration"), on_progress=on_progress
         )
         if returncode != 0:
             tmp_path.unlink(missing_ok=True)
+            tool = "nvencc" if engine == "nvencc" else "ffmpeg"
             return (
-                TranscodeResult(str(rel), "error", f"ffmpeg failed ({returncode}): {tail[-1000:]}"),
+                TranscodeResult(str(rel), "error", f"{tool} failed ({returncode}): {tail[-1000:]}"),
                 probed,
             )
+
+        if engine == "nvencc" and resolved_cover is not None:
+            _attach_cover_remux(tmp_path, resolved_cover)
 
         ok, detail = verify_output(probed, tmp_path)
         if not ok:
@@ -350,7 +496,8 @@ def transcode_one(
                 raise RuntimeError(f"{final_path} already exists, refusing to overwrite")
 
         shutil.move(str(tmp_path), str(final_path))
-        return TranscodeResult(str(rel), "changed", f"{backend}/{preset.name}: {detail}"), probed
+        label = f"{engine}/{backend}/{preset.name}"
+        return TranscodeResult(str(rel), "changed", f"{label}: {detail}"), probed
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
         return TranscodeResult(str(rel), "error", str(exc)), probed

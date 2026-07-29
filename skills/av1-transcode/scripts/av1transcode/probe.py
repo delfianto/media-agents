@@ -16,6 +16,9 @@ from pathlib import Path
 _MASTERING_DISPLAY = "Mastering display metadata"
 _CONTENT_LIGHT = "Content light level metadata"
 _DOVI_CONFIG = "DOVI configuration record"
+# ffprobe names for HDR10+ dynamic metadata vary slightly by version/build;
+# match any side_data_type that clearly names HDR10+.
+_HDR10_PLUS_MARKERS = ("HDR10+", "hdr10+", "Dynamic HDR10+")
 
 
 def probe_file(path: str | Path) -> dict:
@@ -69,6 +72,14 @@ def _find_side_data(side_data_list: list[dict], side_data_type: str) -> dict | N
     return next((sd for sd in side_data_list if sd.get("side_data_type") == side_data_type), None)
 
 
+def _find_hdr10_plus(side_data_list: list[dict]) -> dict | None:
+    for sd in side_data_list:
+        name = sd.get("side_data_type") or ""
+        if any(marker in name for marker in _HDR10_PLUS_MARKERS):
+            return sd
+    return None
+
+
 def _normalize_video(s: dict) -> dict:
     side_data_list = s.get("side_data_list", []) or []
     return {
@@ -85,6 +96,7 @@ def _normalize_video(s: dict) -> dict:
         "mastering_display": _find_side_data(side_data_list, _MASTERING_DISPLAY),
         "content_light": _find_side_data(side_data_list, _CONTENT_LIGHT),
         "dolby_vision": _find_side_data(side_data_list, _DOVI_CONFIG),
+        "hdr10_plus": _find_hdr10_plus(side_data_list),
     }
 
 

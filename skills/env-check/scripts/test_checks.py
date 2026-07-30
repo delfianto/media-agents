@@ -77,18 +77,18 @@ def test_check_pip_or_uv_missing_both(monkeypatch):
 def test_check_env_var_found_and_missing():
     found = checks.check_env_var(
         "TMDB API key",
-        "MEDIAORGANIZER_TMDB_API_KEY",
+        "ORGANIZE_TMDB_API_KEY",
         category="x",
         required=True,
         install_hint="get one",
-        env={"MEDIAORGANIZER_TMDB_API_KEY": "abc123"},
+        env={"ORGANIZE_TMDB_API_KEY": "abc123"},
     )
     assert found.found is True
     assert found.install_hint == ""
 
     missing = checks.check_env_var(
         "TMDB API key",
-        "MEDIAORGANIZER_TMDB_API_KEY",
+        "ORGANIZE_TMDB_API_KEY",
         category="x",
         required=True,
         install_hint="get one",
@@ -96,6 +96,19 @@ def test_check_env_var_found_and_missing():
     )
     assert missing.found is False
     assert missing.install_hint == "get one"
+
+
+def test_check_any_env_var_accepts_skill_specific_or_shared():
+    found = checks.check_any_env_var(
+        "TMDB API key",
+        ("ORGANIZE_TMDB_API_KEY", "TMDB_API_KEY"),
+        category="organize",
+        required=True,
+        install_hint="get one",
+        env={"TMDB_API_KEY": "shared"},
+    )
+    assert found.found is True
+    assert found.detail == "set: TMDB_API_KEY"
 
 
 def test_check_python_package_found_and_missing():

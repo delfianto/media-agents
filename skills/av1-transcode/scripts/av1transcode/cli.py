@@ -442,7 +442,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         "--no-cover-art",
         action="store_true",
         help="Don't look for or embed a poster.jpg/cover.jpg/folder.jpg sitting next to the "
-        "source (default: auto-embed one if found, e.g. one media-organizer already fetched)",
+        "source (default: auto-embed one if found, e.g. one artwork already fetched)",
     )
     sp.set_defaults(func=cmd_run)
 

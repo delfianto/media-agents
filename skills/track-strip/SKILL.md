@@ -1,6 +1,5 @@
 ---
 name: track-strip
-version: 0.2.0
 description: Use when the user wants to inspect or clean up this Plex media library (Movies/ and TV Shows/) - report video/audio/subtitle codec and language statistics, find files with non-English audio or subtitle tracks (or a specific audio codec like DTS), remux (strip) tracks out, drop redundant audio tracks, trim to a single audio track, drop SDH subtitles, or transcode a codec that doesn't play on some device (e.g. DTS muted over eARC) to a compatible one. Triggers on phrases like "codec stats", "language stats", "non-English tracks", "DTS compatibility", "strip subtitles/audio", "clean up the media folder", "how many audio streams", "SDH subtitles", or any request to remux/transcode audio or subtitles in this directory.
 allowed-tools:
     - Bash

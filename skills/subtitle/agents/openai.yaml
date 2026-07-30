@@ -1,0 +1,4 @@
+interface:
+  display_name: "Subtitle"
+  short_description: "Fetch subtitles for organized media"
+  default_prompt: "Use $subtitle to fetch subtitles for this organized media safely."

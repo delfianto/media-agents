@@ -1,7 +1,6 @@
 ---
 name: env-check
-version: 0.1.0
-description: Use when the user wants to know whether this machine has everything the other skills in this repo need before running them - missing binaries (ffmpeg, ffprobe, mkvmerge, nvencc, dovi_tool, hdr10plus_tool, stash-mcp), the wrong Python version, an AV1-incapable or absent GPU, missing dev tools (ruff, basedpyright, pytest), or missing Python packages/credentials (guessit, TMDB/OpenSubtitles API keys). Triggers on phrases like "is my machine set up right", "check dependencies", "what's missing", "am I ready to run av1-transcode/media-organizer", "check for ffmpeg/mkvmerge/nvencc", or moving this repo to a new machine. Read-only - never installs or changes anything, only reports and suggests.
+description: Use when the user wants to know whether this machine has everything the other skills in this repo need before running them - missing binaries (ffmpeg, ffprobe, mkvmerge, mkvpropedit, nvencc, dovi_tool, hdr10plus_tool, stash-mcp), the wrong Python version, an AV1-incapable or absent GPU, missing dev tools (ruff, basedpyright, pytest), or missing Python packages/credentials (guessit, TMDB/OpenSubtitles API keys). Triggers on phrases like "is my machine set up right", "check dependencies", "what's missing", "am I ready to run av1-transcode/organize/mkvedit", "check for ffmpeg/mkvmerge/nvencc", or moving this repo to a new machine. Read-only - never installs or changes anything, only reports and suggests.
 allowed-tools:
     - Bash
 metadata:
@@ -11,7 +10,7 @@ metadata:
 
 # env-check
 
-Every other skill here assumes a handful of external binaries, Python packages, and (for `av1-transcode`'s GPU path) specific hardware are already present on the machine it runs on -- and each one fails in its own way, at its own time, when one of those is missing (an `av1-transcode` run that dies partway through the first file because `nvencc` isn't installed, a `media-organizer` run that errors on a missing `TMDB_API_KEY` only once it actually needs to look something up, `trackstrip apply` failing on `mkvmerge` not being on `PATH`). This skill checks all of it up front, in one pass, before any of that.
+Every other skill here assumes a handful of external binaries, Python packages, and (for `av1-transcode`'s GPU path) specific hardware are already present on the machine it runs on -- and each one fails in its own way, at its own time, when one of those is missing (an `av1-transcode` run that dies partway through the first file because `nvencc` isn't installed, an `organize` run that errors on a missing `TMDB_API_KEY`, `mkvedit` failing without `mkvpropedit`, or `trackstrip apply` failing without `mkvmerge`). This skill checks all of it up front, in one pass, before any of that.
 
 It only ever reads: `shutil.which`, `--version`/`-h`-style subprocess calls, `nvidia-smi`, and Python's own `import`/`os.environ`. It never installs, writes, or deletes anything -- every finding comes with a plain-language suggestion for what to install or configure, but acting on that suggestion is left to the user.
 
@@ -35,8 +34,11 @@ python3 scripts/envcheck/__main__.py --required-only             # hide optional
 | `runtime` | Python >= 3.14, `pip` or `uv`, `ruff`, `basedpyright`, `pytest` | Python: yes (hard repo-wide requirement, see root `AGENTS.md`). The rest: no -- only needed for *developing* a skill, not running one. |
 | `shared` | `ffmpeg`, `ffprobe` | Yes -- both `track-strip` and `av1-transcode` shell out to these directly. |
 | `track-strip` | `mkvmerge` | Yes -- `apply`/`transcode`'s track-selection backend has no fallback. |
+| `mkvedit` | `mkvmerge`, `mkvpropedit` | Yes -- inspection and in-place editing have no fallback. |
 | `av1-transcode` | ffmpeg's `libsvtav1` and `av1_nvenc` encoders, an AV1-capable NVIDIA GPU, `nvencc`, `dovi_tool`, `hdr10plus_tool` | `libsvtav1`: yes (the only backend that can re-inject Dolby Vision RPU, and the CPU fallback path). Everything else: no -- GPU/`nvencc`/`dovi_tool`/`hdr10plus_tool` are all optional speed/metadata conveniences with a documented fallback (see `av1-transcode/reference/incidents.md`). |
-| `media-organizer` | `guessit` (Python package), `MEDIAORGANIZER_TMDB_API_KEY`, `MEDIAORGANIZER_OPENSUBTITLES_API_KEY` | `guessit` and the TMDB key: yes -- nothing in that skill works without either. OpenSubtitles: no -- renaming/organizing works without it, only subtitle fetching is skipped. |
+| `organize` | `guessit`, `ORGANIZE_TMDB_API_KEY` or `TMDB_API_KEY` | Yes. |
+| `artwork` | `ARTWORK_TMDB_API_KEY` or `TMDB_API_KEY` | Yes. |
+| `subtitle` | `SUBTITLE_OPENSUBTITLES_API_KEY` | Optional until a fetch is requested. |
 | `stash-app` | `stash-mcp` | No -- only relevant if that MCP server is actually configured for this session (see root `mcp_config.json`). |
 
 The AV1-capable-GPU check reuses `av1-transcode`'s own capability probe (`medialib.gpu`, shared rather than re-implemented here -- see root `AGENTS.md`'s `lib/medialib` section for why duplicating this exact check would be the wrong move): it hands a real GPU a trivial `av1_nvenc` encode rather than guessing from the GPU's name, since this library's own machine has both an encode-capable RTX 4080 and a decode-only RTX 3060 side by side.

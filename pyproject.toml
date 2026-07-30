@@ -12,3 +12,5 @@ extraPaths = ["lib"]
 pythonVersion = "3.14"
 typeCheckingMode = "standard"
 reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"

@@ -182,6 +182,27 @@ def check_env_var(
     )
 
 
+def check_any_env_var(
+    display_name: str,
+    var_names: tuple[str, ...],
+    *,
+    category: str,
+    required: bool,
+    install_hint: str,
+    env: Mapping[str, str] | None = None,
+) -> CheckResult:
+    env = env if env is not None else os.environ
+    found_names = [name for name in var_names if env.get(name)]
+    return CheckResult(
+        display_name,
+        category,
+        required,
+        bool(found_names),
+        detail=f"set: {', '.join(found_names)}" if found_names else "",
+        install_hint="" if found_names else install_hint,
+    )
+
+
 def all_checks() -> list[CheckResult]:
     return [
         check_python_version(),
@@ -233,6 +254,20 @@ def all_checks() -> list[CheckResult]:
                 "install mkvtoolnix (provides mkvmerge/mkvpropedit) -- track-strip's "
                 "apply/transcode shell out to mkvmerge directly for track selection"
             ),
+        ),
+        check_binary(
+            "mkvmerge",
+            "mkvedit",
+            "mkvmerge",
+            required=True,
+            install_hint="install mkvtoolnix (provides mkvmerge and mkvpropedit)",
+        ),
+        check_binary(
+            "mkvpropedit",
+            "mkvedit",
+            "mkvpropedit",
+            required=True,
+            install_hint="install mkvtoolnix (provides mkvmerge and mkvpropedit)",
         ),
         check_ffmpeg_encoder(
             "libsvtav1",
@@ -286,31 +321,35 @@ def all_checks() -> list[CheckResult]:
         check_python_package(
             "guessit",
             display_name="Python package: guessit",
-            category="media-organizer",
+            category="organize",
             required=True,
             install_hint=(
                 "pip install -r requirements.txt (or run via uv, which reads its PEP 723 block)"
             ),
         ),
-        check_env_var(
+        check_any_env_var(
             "TMDB API key",
-            "MEDIAORGANIZER_TMDB_API_KEY",
-            category="media-organizer",
+            ("ORGANIZE_TMDB_API_KEY", "TMDB_API_KEY"),
+            category="organize",
             required=True,
             install_hint=(
                 "required -- get a free key at themoviedb.org (Settings -> API), then set "
-                "MEDIAORGANIZER_TMDB_API_KEY or add TMDB_API_KEY= to media-organizer's .env"
+                "ORGANIZE_TMDB_API_KEY or shared TMDB_API_KEY"
             ),
+        ),
+        check_any_env_var(
+            "TMDB API key",
+            ("ARTWORK_TMDB_API_KEY", "TMDB_API_KEY"),
+            category="artwork",
+            required=True,
+            install_hint="set ARTWORK_TMDB_API_KEY or shared TMDB_API_KEY",
         ),
         check_env_var(
             "OpenSubtitles API key",
-            "MEDIAORGANIZER_OPENSUBTITLES_API_KEY",
-            category="media-organizer",
+            "SUBTITLE_OPENSUBTITLES_API_KEY",
+            category="subtitle",
             required=False,
-            install_hint=(
-                "optional -- without it, subtitle fetching is skipped (renaming/organizing "
-                "still works); register at opensubtitles.com/api"
-            ),
+            install_hint=("optional until fetching subtitles; register at opensubtitles.com/api"),
         ),
         check_binary(
             "stash-mcp",

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stash App"
+  short_description: "Manage a local Stash media collection"
+  default_prompt: "Use $stash-app to inspect or manage this local Stash media collection through MCP."

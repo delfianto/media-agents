@@ -1,6 +1,6 @@
 # Shared runtime deps for skills/<name>/scripts/*.py that need them.
 # track-strip and av1-transcode are stdlib-only.
-# media-organizer needs guessit for filename parsing (see its SKILL.md for why
+# organize needs guessit for filename parsing (see its SKILL.md for why
 # a from-scratch parser wasn't the right call here) -- also declared inline
-# in scripts/mediaorganizer/__main__.py's PEP 723 metadata block for `uv run`.
+# in scripts/organize/__main__.py's PEP 723 metadata block for `uv run`.
 guessit

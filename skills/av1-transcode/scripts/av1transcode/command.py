@@ -100,6 +100,8 @@ def build_command(
         cmd += ["-color_trc", video["color_transfer"]]
     if video.get("color_space"):
         cmd += ["-colorspace", video["color_space"]]
+    if video.get("color_range") in ("tv", "pc"):
+        cmd += ["-color_range", video["color_range"]]
 
     cmd += _audio_args(kept_audio)
     cmd += _disposition_args("a", len(kept_audio))

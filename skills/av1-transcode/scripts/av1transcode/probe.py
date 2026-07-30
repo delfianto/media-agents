@@ -93,6 +93,7 @@ def _normalize_video(s: dict) -> dict:
         "color_primaries": s.get("color_primaries"),
         "color_transfer": s.get("color_transfer"),
         "color_space": s.get("color_space"),
+        "color_range": s.get("color_range"),
         "mastering_display": _find_side_data(side_data_list, _MASTERING_DISPLAY),
         "content_light": _find_side_data(side_data_list, _CONTENT_LIGHT),
         "dolby_vision": _find_side_data(side_data_list, _DOVI_CONFIG),

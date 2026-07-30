@@ -125,3 +125,31 @@ def test_svtav1_hdr_params_unmapped_color_tags_are_omitted_not_guessed():
     params = colorinfo.svtav1_hdr_params({"color_primaries": "some-future-cicp-name"})
     assert "color-primaries" not in params
     assert params == {}
+
+
+def test_nvencc_hdr_args_full_hdr10_video():
+    video = {
+        "color_primaries": "bt2020",
+        "color_transfer": "smpte2084",
+        "color_space": "bt2020nc",
+        "color_range": "tv",
+        "mastering_display": REAL_MASTERING_DISPLAY,
+        "content_light": REAL_CONTENT_LIGHT,
+    }
+    args = colorinfo.nvencc_hdr_args(video)
+    assert args[args.index("--colorprim") + 1] == "bt2020"
+    assert args[args.index("--transfer") + 1] == "smpte2084"
+    assert args[args.index("--colormatrix") + 1] == "bt2020nc"
+    assert args[args.index("--colorrange") + 1] == "tv"
+    assert args[args.index("--max-cll") + 1] == "992,441"
+    assert args[args.index("--master-display") + 1].startswith("G(")
+
+
+def test_nvencc_hdr_args_unmapped_or_missing_fields_are_omitted_not_guessed():
+    assert colorinfo.nvencc_hdr_args({"color_primaries": "some-future-cicp-name"}) == []
+    assert colorinfo.nvencc_hdr_args({}) == []
+
+
+def test_nvencc_hdr_args_ignores_unknown_color_range():
+    args = colorinfo.nvencc_hdr_args({"color_range": "unknown"})
+    assert "--colorrange" not in args

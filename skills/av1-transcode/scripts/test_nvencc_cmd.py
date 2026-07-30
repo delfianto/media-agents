@@ -125,6 +125,51 @@ def test_build_nvencc_command_selects_single_best_eng_audio():
     assert "2?libopus" in cmd
 
 
+def test_build_nvencc_command_sets_explicit_color_flags_not_metadata_copy():
+    # Real bug (Dune Part One remux): "--video-metadata copy" doesn't control
+    # bitstream color signaling and dragged forward stale mkvmerge stats tags
+    # instead -- these are nvencc's actual color flags, built from the same
+    # source video dict _probed() already sets to bt2020/smpte2084/bt2020nc.
+    complete_mastering_display = {
+        "red_x": "11408507/16777216",
+        "red_y": "5368709/16777216",
+        "green_x": "2222981/8388608",
+        "green_y": "11576279/16777216",
+        "blue_x": "5033165/33554432",
+        "blue_y": "16106127/268435456",
+        "white_point_x": "10492471/33554432",
+        "white_point_y": "689963/2097152",
+        "min_luminance": "209800/2098000053",
+        "max_luminance": "1000/1",
+    }
+    probed = _probed(video_extra={"mastering_display": complete_mastering_display})
+    cmd = nvencc_cmd.build_nvencc_command("in.mkv", "out.mkv", probed, _preset())
+    assert "--video-metadata" in cmd
+    assert cmd[cmd.index("--video-metadata") + 1] == "clear"
+    assert "copy" not in cmd[cmd.index("--video-metadata") : cmd.index("--video-metadata") + 2]
+    assert cmd[cmd.index("--colorprim") + 1] == "bt2020"
+    assert cmd[cmd.index("--transfer") + 1] == "smpte2084"
+    assert cmd[cmd.index("--colormatrix") + 1] == "bt2020nc"
+    assert "--master-display" in cmd
+
+
+def test_build_nvencc_command_omits_unmapped_color_flags():
+    probed = _probed(
+        video_extra={
+            "color_primaries": None,
+            "color_transfer": None,
+            "color_space": None,
+            "mastering_display": None,
+        }
+    )
+    cmd = nvencc_cmd.build_nvencc_command("in.mkv", "out.mkv", probed, _preset())
+    assert "--colorprim" not in cmd
+    assert "--transfer" not in cmd
+    assert "--colormatrix" not in cmd
+    assert "--master-display" not in cmd
+    assert cmd[cmd.index("--video-metadata") + 1] == "clear"
+
+
 def test_build_nvencc_command_external_rpu_path():
     probed = _probed(video_extra={"dolby_vision": {"dv_profile": 8}})
     cmd = nvencc_cmd.build_nvencc_command(

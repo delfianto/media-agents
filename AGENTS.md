@@ -18,7 +18,7 @@ skills/<name>/scripts/*.py     the Python harness code a skill invokes, where on
 skills/<name>/reference/*.md   supplementary docs (incident history, worked examples) SKILL.md points to rather than inlines
 ```
 
-Each skill with real logic (`media-library`, `av1-transcode`, `media-organizer`) is a proper multi-module package (`scripts/<pkg>/`), not a single flat script -- each has enough interdependent logic (policy decisions, multiple backends, external API clients, a CLI) to warrant it. Don't force a future skill into a single-file shape it doesn't fit; `scripts/` can hold whatever internal structure the skill actually needs. Not every skill needs a `scripts/` directory at all -- `stash-app` (talks to a local Stash media server via the `stash-mcp` MCP server) is prompt/instruction-only.
+Each skill with real logic (`media-library`, `av1-transcode`, `media-organizer`) is a proper multi-module package (`scripts/<pkg>/`), not a single flat script -- each has enough interdependent logic (policy decisions, multiple backends, external API clients, a CLI) to warrant it. Don't force a future skill into a single-file shape it doesn't fit; `scripts/` can hold whatever internal structure the skill actually needs. `env-check` is also a real package but a much smaller one (one `check_*` function per prerequisite plus pure report-formatting) -- simple logic doesn't need forcing into a single flat script either, it just doesn't need as many modules. Not every skill needs a `scripts/` directory at all -- `stash-app` (talks to a local Stash media server via the `stash-mcp` MCP server) is prompt/instruction-only.
 
 ### `lib/medialib` -- shared helpers, not per-skill reinvention
 

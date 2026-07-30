@@ -44,6 +44,14 @@ CICP_MATRIX: CicpTable = {
 
 HDR_TRANSFER_NAMES = frozenset({"smpte2084", "arib-std-b67"})
 
+# nvencc's --colorprim/--transfer/--colormatrix take the same string spellings
+# ffprobe reports (confirmed against `nvencc --help`: bt709, bt470bg,
+# smpte170m, bt2020, smpte2084, arib-std-b67, bt2020nc, bt2020c are all
+# accepted verbatim) -- reusing the CICP_* dicts' keys as the allowlist means
+# only values already vetted against real discs get passed through, same
+# rationale as the CICP tables themselves.
+NVENC_COLORRANGE_NAMES = frozenset({"tv", "pc"})
+
 
 def parse_fraction(value: str) -> float | None:
     if not value:
@@ -152,3 +160,47 @@ def svtav1_hdr_params(video: dict) -> dict[str, str]:
             params["content-light"] = value
 
     return params
+
+
+def nvencc_hdr_args(video: dict) -> list[str]:
+    """NVEncC argv for the source's static color/HDR metadata.
+
+    NVEncC does not infer container-level colorprim/transfer/colormatrix from
+    the decoded source on its own -- confirmed directly against a real 4K DV
+    remux (Dune Part One): the previous approach here, `--video-metadata
+    copy`, copies freeform per-stream *tags* (title, and, as a side effect,
+    stale mkvmerge statistics like BPS/NUMBER_OF_BYTES from the source's own
+    HEVC track), which is an entirely different thing from bitstream color
+    signaling -- the encoded AV1 stream came out with color_primaries/
+    color_transfer/color_space all "unknown" despite the flag being set.
+    These are NVEncC's actual color flags, set explicitly from what probe.py
+    already read off the source, same approach as svtav1_hdr_params above.
+    """
+    args: list[str] = []
+
+    primaries = video.get("color_primaries") or ""
+    if primaries in CICP_PRIMARIES:
+        args += ["--colorprim", primaries]
+    transfer = video.get("color_transfer") or ""
+    if transfer in CICP_TRANSFER:
+        args += ["--transfer", transfer]
+    matrix = video.get("color_space") or ""
+    if matrix in CICP_MATRIX:
+        args += ["--colormatrix", matrix]
+    color_range = video.get("color_range") or ""
+    if color_range in NVENC_COLORRANGE_NAMES:
+        args += ["--colorrange", color_range]
+
+    mastering_display = video.get("mastering_display")
+    if mastering_display:
+        value = mastering_display_param(mastering_display)
+        if value:
+            args += ["--master-display", value]
+
+    content_light = video.get("content_light")
+    if content_light:
+        value = content_light_param(content_light)
+        if value:
+            args += ["--max-cll", value]
+
+    return args

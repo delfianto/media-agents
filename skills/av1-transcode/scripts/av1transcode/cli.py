@@ -4,12 +4,12 @@ import shutil
 import sys
 from pathlib import Path
 
+from medialib.gpu import detect_av1_nvenc_gpu
 from medialib.humansize import human_size
 from medialib.libroot import find_library_root, find_own_script_path
 from medialib.walk import walk_media_files
 
 from . import colorinfo, config, langfilter, nvencc_cmd, presets
-from . import gpu as gpu_mod
 from . import run as run_mod
 from .probe import probe_file
 
@@ -58,7 +58,7 @@ def cmd_probe(args):
         preset = presets.select_preset(video["height"], args.profile, hdr)
         size_desc = human_size(probed["format"].get("size"))
         nvencc_ok = nvencc_cmd.nvencc_available()
-        gpu_index = gpu_mod.detect_av1_nvenc_gpu()
+        gpu_index = detect_av1_nvenc_gpu()
         try:
             backend = run_mod.choose_backend(video, "auto", gpu_index, nvencc_ok=nvencc_ok)
             engine = run_mod.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
@@ -159,7 +159,7 @@ def cmd_run(args):
 
     gpu_index = None
     if args.backend in ("auto", "nvenc"):
-        gpu_index = gpu_mod.detect_av1_nvenc_gpu()
+        gpu_index = detect_av1_nvenc_gpu()
         if args.backend == "nvenc" and gpu_index is None:
             print(
                 "No AV1-capable NVIDIA GPU detected; cannot honor --backend nvenc.", file=sys.stderr

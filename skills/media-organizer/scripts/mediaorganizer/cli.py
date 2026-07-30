@@ -14,7 +14,7 @@ from .tmdb import TmdbClient
 
 def _walk_inbox(inbox: Path, path_filter: str | None = None, limit: int | None = None):
     # skip_root_files=False: the inbox itself is where loose, not-yet-sorted
-    # downloads sit -- unlike av1transcode/mediatools, which skip files
+    # downloads sit -- unlike av1transcode/trackstrip, which skip files
     # directly at their (already-organized) library root.
     return walk_media_files(
         inbox,

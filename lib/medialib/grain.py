@@ -52,7 +52,7 @@ SAMPLE_FRACTIONS: tuple[float, ...] = (0.2, 0.5, 0.8)
 # routes to nvenc. Only three titles' worth of real data went into this --
 # recalibrate (`--grain-threshold` in av1-transcode/analyze) once it's been
 # checked against more of this library's actual files, the same way
-# track_policy's SDH/anime thresholds in media-library were tuned after
+# track_policy's SDH/anime thresholds in track-strip were tuned after
 # whole-library auditing rather than trusted on first measurement.
 GRAIN_CPU_THRESHOLD = 0.012
 

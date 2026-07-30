@@ -13,7 +13,7 @@ metadata:
 
 Does what FileBot does -- identify a video file, rename/move it into a Plex- or Jellyfin-standard layout, and fetch artwork/NFO/subtitles for it -- without a FileBot license, using free APIs directly: TMDB (themoviedb.org) for identification, artwork, and metadata; OpenSubtitles.com for subtitles. See `reference/naming-conventions.md` for exactly how FileBot's own pipeline works and why this skill only needs TMDB (not TheTVDB, which stopped offering a no-strings-attached free API tier -- see that doc for the specifics), and `reference/apis.md` for the full endpoint reference both clients were built against.
 
-The toolkit lives at `scripts/mediaorganizer.py` (next to this file), a Python package wrapping `guessit` (filename parsing -- the one third-party dependency this repo has; see "Why guessit" below), `urllib` (TMDB/OpenSubtitles HTTP calls), and `xml.etree.ElementTree` (NFO generation).
+The toolkit lives at `scripts/mediaorganizer/` (next to this file), a Python package wrapping `guessit` (filename parsing -- the one third-party dependency this repo has; see "Why guessit" below), `urllib` (TMDB/OpenSubtitles HTTP calls), and `xml.etree.ElementTree` (NFO generation).
 
 ## Setup
 
@@ -21,40 +21,40 @@ Copy `.env.example` to `.env` (or anywhere, and pass `--env-file`) and fill in a
 
 **This repo has no system `pip`.** Run via `uv` (already installed on this machine), either of:
 ```bash
-uv run <path-to-this-skill>/scripts/mediaorganizer.py organize [options]
+uv run <path-to-this-skill>/scripts/mediaorganizer/__main__.py organize [options]
 ```
 (the script's inline PEP 723 metadata tells `uv` to provision `guessit` automatically -- no separate install step), or the conventional way if a system with `pip` is used instead:
 ```bash
 pip install -r requirements.txt   # from the .agents repo root
-python3 scripts/mediaorganizer.py organize [options]
+python3 scripts/mediaorganizer/__main__.py organize [options]
 ```
 
 ## Running
 
 ```bash
-uv run scripts/mediaorganizer.py organize --env-file .env [options]
+uv run scripts/mediaorganizer/__main__.py organize --env-file .env [options]
 ```
 
 **Defaults to a dry run** that parses and identifies every file under the inbox and prints exactly what it would do (destination path, confidence, NFO/artwork/subtitle plan) without touching anything. Pass `--yes` to actually execute.
 
 ```bash
 # dry run (safe, default) -- always do this first
-uv run scripts/mediaorganizer.py organize --env-file .env
+uv run scripts/mediaorganizer/__main__.py organize --env-file .env
 
 # scope to one subdirectory of the inbox first
-uv run scripts/mediaorganizer.py organize --env-file .env --path "Some Show"
+uv run scripts/mediaorganizer/__main__.py organize --env-file .env --path "Some Show"
 
 # execute for real
-uv run scripts/mediaorganizer.py organize --env-file .env --path "Some Show" --yes
+uv run scripts/mediaorganizer/__main__.py organize --env-file .env --path "Some Show" --yes
 
 # first time trying this against real files: copy instead of move, so the
 # inbox file is still there if something looks wrong
-uv run scripts/mediaorganizer.py organize --env-file .env --yes --copy
+uv run scripts/mediaorganizer/__main__.py organize --env-file .env --yes --copy
 ```
 
 ## Confidence-gated matching -- there is no safe fallback here
 
-Every file gets a 0.0-1.0 confidence score (title similarity + a year-match bonus/penalty, see `matching.py`). Below `MEDIAORGANIZER_MIN_CONFIDENCE` (default 0.75), the file is left alone and reported as `[REVIEW]` rather than acted on. This is stricter than media-library's safety nets elsewhere in this repo: a stripped audio track always has a fallback ("keep the original track"), but a misidentified movie renamed to the wrong title has no equivalent "leave it as it was" -- so low-confidence matches are never auto-applied, full stop. Files already carrying an explicit ID tag in their name (e.g. downloaded as `Movie Name (2020) {tmdb-12345}.mkv`) skip search entirely and go straight to that ID at confidence 1.0.
+Every file gets a 0.0-1.0 confidence score (title similarity + a year-match bonus/penalty, see `matching.py`). Below `MEDIAORGANIZER_MIN_CONFIDENCE` (default 0.75), the file is left alone and reported as `[REVIEW]` rather than acted on. This is stricter than track-strip's safety nets elsewhere in this repo: a stripped audio track always has a fallback ("keep the original track"), but a misidentified movie renamed to the wrong title has no equivalent "leave it as it was" -- so low-confidence matches are never auto-applied, full stop. Files already carrying an explicit ID tag in their name (e.g. downloaded as `Movie Name (2020) {tmdb-12345}.mkv`) skip search entirely and go straight to that ID at confidence 1.0.
 
 ## What actually happens on `--yes`
 

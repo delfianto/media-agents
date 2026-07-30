@@ -10,7 +10,7 @@ functions. Two axes decide a preset:
   - profile: "film" (default) or "anime" -- NOT auto-detected. A Japanese
     audio track means a Japanese-original release, not necessarily hand-drawn
     or flat-shaded video (a live-action Japanese film would be misclassified
-    by that signal), so unlike media-library's anime-audio-policy heuristic,
+    by that signal), so unlike track-strip's anime-audio-policy heuristic,
     profile here is always an explicit choice by whoever invokes `run`.
 
 HDR is a third, orthogonal condition applied on top of whichever (tier,

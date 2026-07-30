@@ -5,7 +5,7 @@ the NFO.
 
 Confidence-gated, with no safe fallback: a match below
 `config.min_confidence` is left alone and reported for manual review rather
-than acted on. Unlike media-library's audio-track safety net (which always
+than acted on. Unlike track-strip's audio-track safety net (which always
 has a "keep the original track" fallback), there is no safe default here --
 misidentifying a movie and renaming it to the wrong title has no equivalent
 of "leave it as it was."

@@ -1,6 +1,6 @@
 # Incident history
 
-Real bugs found while building and smoke-testing this skill against actual files in this library (a real 4K HDR10+Dolby Vision remux, and a real anime episode), in the same spirit as `media-library/reference/incidents.md` -- the fixes behind several safety/correctness details in `presets.py`, `gpu.py`, and `run.py` came from here, not from reading documentation alone.
+Real bugs found while building and smoke-testing this skill against actual files in this library (a real 4K HDR10+Dolby Vision remux, and a real anime episode), in the same spirit as `track-strip/reference/incidents.md` -- the fixes behind several safety/correctness details in `presets.py`, `gpu.py`, and `run.py` came from here, not from reading documentation alone.
 
 ## `opus_bitrate_kbps` was non-monotonic for uncommon channel counts
 

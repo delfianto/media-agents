@@ -1,19 +1,19 @@
 ---
-name: media-library
+name: track-strip
 version: 0.2.0
 description: Use when the user wants to inspect or clean up this Plex media library (Movies/ and TV Shows/) - report video/audio/subtitle codec and language statistics, find files with non-English audio or subtitle tracks (or a specific audio codec like DTS), remux (strip) tracks out, drop redundant audio tracks, trim to a single audio track, drop SDH subtitles, or transcode a codec that doesn't play on some device (e.g. DTS muted over eARC) to a compatible one. Triggers on phrases like "codec stats", "language stats", "non-English tracks", "DTS compatibility", "strip subtitles/audio", "clean up the media folder", "how many audio streams", "SDH subtitles", or any request to remux/transcode audio or subtitles in this directory.
 allowed-tools:
     - Bash
 metadata:
-    author: "media-library"
+    author: "track-strip"
     focus: "Plex library codec/language auditing and safe track-level remuxing"
 ---
 
-# media-library
+# track-strip
 
-This Plex library (`Movies/` and `TV Shows/`) is inspected and maintained by a zero-dependency Python toolkit at `scripts/mediatools.py` (next to this file). It wraps `ffprobe`, `ffmpeg`, and `mkvmerge`. Track selection (`apply`) never re-encodes - it only remuxes (stream-copies) files to add/remove tracks. `transcode` is the one exception: it re-encodes only the audio streams that need it (video is always stream-copied), used when a codec itself is the problem (e.g. DTS not decoding over eARC on some LG TVs) rather than the track's language.
+This Plex library (`Movies/` and `TV Shows/`) is inspected and maintained by a zero-dependency Python toolkit at `scripts/trackstrip/` (next to this file). It wraps `ffprobe`, `ffmpeg`, and `mkvmerge`. Track selection (`apply`) never re-encodes - it only remuxes (stream-copies) files to add/remove tracks. `transcode` is the one exception: it re-encodes only the audio streams that need it (video is always stream-copied), used when a codec itself is the problem (e.g. DTS not decoding over eARC on some LG TVs) rather than the track's language.
 
-See `reference/incidents.md` for the full incident history (real bugs found auditing this exact library, and the fixes) behind every safety rule below - read it before changing verification/fallback logic in `scripts/mediatools/`, since several of these were subtle enough to ship once already.
+See `reference/incidents.md` for the full incident history (real bugs found auditing this exact library, and the fixes) behind every safety rule below - read it before changing verification/fallback logic in `scripts/trackstrip/`, since several of these were subtle enough to ship once already.
 
 Only files inside `Movies/`/`TV Shows/` subdirectories are ever touched - anything sitting loose directly at the library root (e.g. a freshly added file not yet sorted) is invisible to every subcommand by design.
 
@@ -22,55 +22,55 @@ Only files inside `Movies/`/`TV Shows/` subdirectories are ever touched - anythi
 Always invoke via `python3`, from anywhere (paths default to this library root automatically - see "Path resolution" below):
 
 ```bash
-python3 <path-to-this-skill>/scripts/mediatools.py <subcommand> [options]
+python3 <path-to-this-skill>/scripts/trackstrip/__main__.py <subcommand> [options]
 ```
 
 Subcommands, in the order you'd normally use them:
 
-1. **`scan`** - Probe every media file with `ffprobe` and update the JSON cache at `<library-root>/.cache/mediatools/scan.json`. Read-only. Incremental (skips files whose size+mtime match the cache) unless `--force` is passed.
+1. **`scan`** - Probe every media file with `ffprobe` and update the JSON cache at `<library-root>/.cache/trackstrip/scan.json`. Read-only. Incremental (skips files whose size+mtime match the cache) unless `--force` is passed.
    ```bash
-   python3 scripts/mediatools.py scan --jobs 8
+   python3 scripts/trackstrip/__main__.py scan --jobs 8
    ```
 
 2. **`stats`** - Print codec and language statistics from the cache: video codec/profile/resolution breakdown, audio codec + lossless/lossy split, subtitle codec breakdown, per-language track counts, how many files have non-English audio/subtitles, and an estimate of what the default policy would strip. Read-only; requires `scan` to have run at least once.
    ```bash
-   python3 scripts/mediatools.py stats
+   python3 scripts/trackstrip/__main__.py stats
    ```
 
 3. **`plan`** - Fast, cache-based preview of exactly which tracks `apply` would drop per file, with reasons. Read-only.
    ```bash
-   python3 scripts/mediatools.py plan [--path "substring"] [--limit N]
+   python3 scripts/trackstrip/__main__.py plan [--path "substring"] [--limit N]
    ```
 
 4. **`apply`** - Remux files to drop non-English audio/subtitle tracks (plus whatever other policy flags are set - see the table below). **Defaults to a live, authoritative dry run** (re-probes each file fresh and prints the exact `mkvmerge`/`ffmpeg` command it would run, touching nothing). Pass `--yes` to actually execute.
    ```bash
    # authoritative dry run (safe, default)
-   python3 scripts/mediatools.py apply --path "Some Show"
+   python3 scripts/trackstrip/__main__.py apply --path "Some Show"
 
    # execute for real, for one show first
-   python3 scripts/mediatools.py apply --path "Some Show" --yes
+   python3 scripts/trackstrip/__main__.py apply --path "Some Show" --yes
 
    # execute for the whole library
-   python3 scripts/mediatools.py apply --yes
+   python3 scripts/trackstrip/__main__.py apply --yes
    ```
 
 5. **`transcode`** - Re-encode audio tracks of a given codec to a more compatible one; video and every other track are always stream-copied untouched. For codec-level playback problems rather than language ones - e.g. DTS/DTS-HD MA is muted on some LG TVs over eARC (confirmed on this library: LG has full Dolby licensing for AC-3/E-AC-3/TrueHD/Atmos, but doesn't license DTS decode in most webOS firmware). Same dry-run-by-default and verify-then-swap safety model as `apply`.
    ```bash
-   python3 scripts/mediatools.py transcode --path "Some Show"                    # dry run
-   python3 scripts/mediatools.py transcode --path "Some Show" --yes --no-backup  # execute
+   python3 scripts/trackstrip/__main__.py transcode --path "Some Show"                    # dry run
+   python3 scripts/trackstrip/__main__.py transcode --path "Some Show" --yes --no-backup  # execute
    # defaults: --from-codec dts --to-codec eac3 --bitrate 640k
    ```
    Also use `--drop-audio-codec CODEC` on `plan`/`apply` for files where the problem codec has a working fallback already present (e.g. DTS-HD MA alongside a TrueHD or AC3 track) - a plain track drop rather than a transcode, since no compatible audio would be lost. The safety net doubles as protection here: run `apply --drop-audio-codec dts` library-wide and it will only ever affect files that have another *usable* audio track to fall back to - files where the flagged codec is the only real audio come back `unchanged` automatically, no need to `--path`-filter them out by hand. "Usable" specifically excludes commentary tracks (see the Prometheus incident in `reference/incidents.md` - a real data-loss case this guards against now).
 
 6. **`purge-backups`** - Once you've confirmed the remuxed files play fine, permanently delete the backed-up originals to reclaim disk space.
    ```bash
-   python3 scripts/mediatools.py purge-backups         # shows size, asks for --yes
-   python3 scripts/mediatools.py purge-backups --yes    # actually deletes
+   python3 scripts/trackstrip/__main__.py purge-backups         # shows size, asks for --yes
+   python3 scripts/trackstrip/__main__.py purge-backups --yes    # actually deletes
    ```
 
 ## Path resolution
 
-`scripts/mediatools.py` finds the library root by walking up from its own location looking for an ancestor directory named `.agents`, then using *that* directory's parent - i.e. wherever this repo is checked out into. Override with `--root` or the `MEDIATOOLS_ROOT` env var if invoking against a different library. The scan cache and backup directory default to `<library-root>/.cache/mediatools/` - outside this repo, since they're disposable runtime state, not source.
+`trackstrip` finds the library root by walking up from its own location looking for an ancestor directory named `.agents`, then using *that* directory's parent - i.e. wherever this repo is checked out into. Override with `--root`, the `TRACKSTRIP_ROOT` env var, or the `MEDIALIB_ROOT` env var shared with the other skills, if invoking against a different library. The scan cache and backup directory default to `<library-root>/.cache/trackstrip/` - outside this repo, since they're disposable runtime state, not source.
 
 ## Track-keep policy (what counts as "non-English")
 
@@ -110,7 +110,7 @@ Detects SDH ("Subtitles for the Deaf and Hard-of-hearing" - adds speaker labels 
 - `apply` without `--yes` **never writes anything**, even though it does a full live re-probe per file - safe to run as often as you like.
 - When executing, each file is remuxed to a temp file next to the original first, then verified (has video, has audio, duration matches within 2%, decodes cleanly at the head) *before* the original is touched. See `reference/incidents.md` for why the decode check is head-only and whitelists one specific benign ffmpeg message.
 - Language tags are written explicitly on every kept audio/subtitle track during muxing (`--language`/`-metadata:s:*:N language=`), fixing the blank/`und` tags common on this library's releases.
-- Originals are moved (not deleted) to `.cache/mediatools/originals/<relative path>` by default, mirroring the library layout. Use `purge-backups` to reclaim that space once you've spot-checked playback. Pass `--no-backup` to delete originals immediately instead (verification still gates it - the original is only ever touched after its replacement passes every check above).
+- Originals are moved (not deleted) to `.cache/trackstrip/originals/<relative path>` by default, mirroring the library layout. Use `purge-backups` to reclaim that space once you've spot-checked playback. Pass `--no-backup` to delete originals immediately instead (verification still gates it - the original is only ever touched after its replacement passes every check above).
 - **Backups do not shrink disk usage - they relocate bytes.** The backup move is a same-filesystem rename (free), but until `purge-backups` runs, the disk holds both the new file and the full-size backup for every file processed so far. Backing up everything and purging once at the end means peak extra usage approaches the combined post-remux size of every changed file - likely multiple TB for a whole-library run. For a run covering most/all of the library, either pass `--no-backup` (each original is freed immediately once verified) or purge in small batches (`apply --path "<show>" --yes` then `purge-backups --yes`, repeated) instead of one backup-everything-then-purge-once pass. See `reference/incidents.md` for a case where this genuinely came close to filling the disk.
 - The backing disk is a single spinning HDD - `apply`/`transcode` process files sequentially by design (no `--jobs` flag) to avoid seek-thrashing; `scan` parallelizes ffprobe reads instead since those only touch small headers.
 - **Always confirm with the user before running `apply`/`transcode --yes` against the real library** (as opposed to a `--path`-filtered subset or a dry run) - it is a bulk, semi-destructive operation across the user's real Plex content, even with backups enabled.
@@ -125,6 +125,6 @@ Detects SDH ("Subtitles for the Deaf and Hard-of-hearing" - adds speaker labels 
 
 ## Extending
 
-The package under `scripts/mediatools/` is small and modular: `langs.py` (language code table), `scan.py` (ffprobe walk+cache), `track_policy.py` (the single keep/drop decision function, shared by both strip backends and by `stats`), `remux_mkv.py` (mkvmerge backend for track selection), `remux_ffmpeg.py` (ffmpeg backend for mp4/other containers), `transcode.py` (ffmpeg audio re-encode, the one place that isn't pure stream copy), `apply.py` (shared orchestration used by both `apply` and `transcode`: temp file, verify, backup, swap - see `_execute_backend_plan`), `cli.py` (argparse subcommands). Add new subcommands in `cli.py`. `test_track_policy.py` covers the policy logic - run it (see `AGENTS.md` at the repo root for the lint/type-check/test commands) after touching `track_policy.py`.
+The package under `scripts/trackstrip/` is small and modular: `langs.py` (language code table), `scan.py` (ffprobe walk+cache), `track_policy.py` (the single keep/drop decision function, shared by both strip backends and by `stats`), `remux_mkv.py` (mkvmerge backend for track selection), `remux_ffmpeg.py` (ffmpeg backend for mp4/other containers), `transcode.py` (ffmpeg audio re-encode, the one place that isn't pure stream copy), `apply.py` (shared orchestration used by both `apply` and `transcode`: temp file, verify, backup, swap - see `_execute_backend_plan`), `cli.py` (argparse subcommands). Add new subcommands in `cli.py`. `test_track_policy.py` covers the policy logic - run it (see `AGENTS.md` at the repo root for the lint/type-check/test commands) after touching `track_policy.py`.
 
 When adding a new backend, note that `track_policy.from_mkvmerge_track()` normalizes mkvmerge's audio `codec` field (a free-text description like "DTS-HD Master Audio" that varies with profile) through its stable `codec_id` (e.g. `A_DTS`) into the same short name ffprobe uses (`dts`) - extend `_MKVMERGE_AUDIO_CODEC_ID_MAP` there if you add logic that compares `codec_name` for a codec not already in that table, or codec-based matching will silently no-op on `.mkv` files (this exact bug shipped once already - see `reference/incidents.md`).

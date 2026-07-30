@@ -9,7 +9,7 @@ from difflib import SequenceMatcher
 
 # Below this, don't auto-apply the match -- surface it for manual review
 # instead of guessing wrong on an unattended/harness-driven run. This is the
-# same "don't act on an ambiguous signal" principle as media-library's SDH
+# same "don't act on an ambiguous signal" principle as track-strip's SDH
 # heuristic (bounded ratio, narrow eligibility) and its zero-audio-track
 # safety net: better to leave a file untouched than to silently mis-rename
 # or mis-tag it.

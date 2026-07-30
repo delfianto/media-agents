@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Entrypoint: python3 mediatools.py <scan|stats|plan|apply|transcode|purge-backups> ...
+"""Entrypoint: python3 envcheck/__main__.py [--category NAME] [--required-only]
+
+Lives inside the `envcheck` package itself (rather than as a same-named
+sibling file next to it) so nothing shadows or gets shadowed by the package
+on import -- run directly by path like this, it behaves like any other
+script (`__name__ == "__main__"`, never registered in `sys.modules` under
+the package's own name), and it also means `python -m envcheck` works from
+`scripts/` if that's ever useful.
 
 Best invoked via an absolute (or at least `.agents`-rooted) path. `.agents`
 is commonly a symlink into the real checkout elsewhere; see _find_own_path's
@@ -60,14 +67,17 @@ def _agents_lib_dir(start: Path) -> Path:
 
 
 _own_path = _find_own_path()
-_scripts_dir = _own_path.parent
+# __main__.py lives inside envcheck/ itself, one level below scripts/ --
+# that's the directory that needs to be on sys.path for `import envcheck`
+# to resolve (and for `.` in the package's own submodules to work).
+_scripts_dir = _own_path.parent.parent
 sys.path.insert(0, str(_scripts_dir))
 try:
     sys.path.insert(0, str(_agents_lib_dir(_scripts_dir)))
 except RuntimeError as exc:
     sys.exit(f"{exc}. Invoke this script by its .agents-rooted path (see SKILL.md).")
 
-from mediatools.cli import main
+from envcheck.cli import main
 
 if __name__ == "__main__":
     main()

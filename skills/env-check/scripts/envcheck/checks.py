@@ -214,7 +214,7 @@ def all_checks() -> list[CheckResult]:
             required=True,
             install_hint=(
                 "install ffmpeg (with libsvtav1 + NVENC support if this machine has an "
-                "NVIDIA GPU) -- required by media-library and av1-transcode"
+                "NVIDIA GPU) -- required by track-strip and av1-transcode"
             ),
         ),
         check_binary(
@@ -226,11 +226,11 @@ def all_checks() -> list[CheckResult]:
         ),
         check_binary(
             "mkvmerge",
-            "media-library",
+            "track-strip",
             "mkvmerge",
             required=True,
             install_hint=(
-                "install mkvtoolnix (provides mkvmerge/mkvpropedit) -- media-library's "
+                "install mkvtoolnix (provides mkvmerge/mkvpropedit) -- track-strip's "
                 "apply/transcode shell out to mkvmerge directly for track selection"
             ),
         ),

@@ -113,7 +113,7 @@ def _normalize_audio(s: dict) -> dict:
         # ffprobe's own bit_rate field is frequently absent for VBR lossless
         # codecs (TrueHD in particular) since there's no single header value
         # to report -- the container's own BPS tag (the same fallback
-        # media-library's scan.py uses) fills that gap.
+        # track-strip's scan.py uses) fills that gap.
         "bit_rate": _to_int(s.get("bit_rate")) or _to_int(tags.get("BPS")),
         "language": tags.get("language"),
         "title": tags.get("title"),

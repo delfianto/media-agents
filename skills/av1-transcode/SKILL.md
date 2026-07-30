@@ -43,9 +43,15 @@ python3 <path-to-this-skill>/scripts/av1transcode.py <subcommand> [options]
    # anime/cartoon sources: --profile is never auto-detected, see below
    python3 scripts/av1transcode.py run --path "Some Anime" --profile anime --yes
 
-   # write converted files elsewhere instead of swapping in place -- the
-   # source is never touched in this mode (no backup/delete either)
+   # write converted files elsewhere instead of swapping in place -- flat,
+   # under their own filename directly in --output-dir (not mirroring the
+   # source's directory structure), and the source is never touched in
+   # this mode (no backup/delete either)
    python3 scripts/av1transcode.py run --path "Some Movie" --output-dir /converted --yes
+
+   # --output-dir refuses to clobber a pre-existing file at the destination
+   # unless told to
+   python3 scripts/av1transcode.py run --path "Some Movie" --output-dir /converted --overwrite-existing --yes
 
    # keep every audio/subtitle track instead of the single-best-eng-track default
    python3 scripts/av1transcode.py run --path "Some Movie" --audio-lang all --subtitle-lang all --yes
@@ -101,7 +107,8 @@ A `run --yes` invocation prints a throttled progress line (at most once every ~1
 - `run` without `--yes` never writes anything, even though it does a live probe of every targeted file - safe to run as often as needed to check what would happen.
 - When executing: encodes to a temp file next to the original first, then verifies the result (has video, has audio, duration matches within 2%, a head-only decode spot check, and - if the source was HDR - that the output is still tagged HDR and still carries mastering-display metadata if the source did; if the source had Dolby Vision or HDR10+, that dynamic metadata must still be present on the output) *before* the original is touched. A file that ends up larger than its source gets flagged with a warning rather than silently accepted, in keeping with the actual goal (smaller, not just different).
 - Originals are moved (not deleted) to `.cache/av1transcode/originals/<relative path>` by default, mirroring media-library's convention. Use `purge-backups` once re-encoded files are confirmed good. Pass `--no-backup` to delete originals immediately instead (verification still gates it). None of this applies when `--output-dir` is set - the source is never touched at all in that mode, so there's nothing to back up.
-- Output is always `.mkv` regardless of the source container (AV1 in MP4 works too, but MKV is this library's convention and handles font attachments/multiple subtitle tracks better) - a `.mp4` source ends up backed up under its original extension while the new file takes over the same directory (or the mirrored `--output-dir` location) under a `.mkv` name.
+- Output is always `.mkv` regardless of the source container (AV1 in MP4 works too, but MKV is this library's convention and handles font attachments/multiple subtitle tracks better) - a `.mp4` source ends up backed up under its original extension while the new file takes over the same directory (or lands flat in `--output-dir`, under its own filename only - not mirroring the source's directory structure) under a `.mkv` name.
+- **`--output-dir` writes flat, not mirrored**: the converted file lands at `<output-dir>/<source filename>.mkv`, regardless of how deep the source sits under `--root`. A pre-existing file at that destination is left alone and reported as an error unless `--overwrite-existing` is passed. If `--output-dir` (or a custom `--backup-dir`/`--log-dir`) resolves to a plain subdirectory of `--root` itself, it's excluded from the file walk so a freshly-written output can never be rediscovered as a new source and re-encoded on top of itself in the same invocation (see `reference/incidents.md`).
 - Audio/subtitle tracks matching `--audio-lang`/`--subtitle-lang` (default `eng`) are kept and re-encoded/copied; attachments (fonts) are always kept regardless. This is a plain by-language filter, not the nuanced policy (commentary/SDH/anime-release detection) `media-library` owns - run that skill first for anything beyond "just keep English". Pass `--no-subtitles` to drop every subtitle track regardless of language (e.g. if a source subtitle codec can't mux into Matroska).
 - Sequential by design, same as media-library's `apply`/`transcode` - no `--jobs` flag. An encode is CPU/GPU-bound rather than disk-bound the way a stream-copy remux is, but running two at once on the same GPU or the same set of CPU cores would just make both slower, not faster.
 

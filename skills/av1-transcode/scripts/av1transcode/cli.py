@@ -4,53 +4,22 @@ import shutil
 import sys
 from pathlib import Path
 
+from medialib.humansize import human_size
+from medialib.libroot import find_library_root, find_own_script_path
+from medialib.walk import walk_media_files
+
 from . import colorinfo, config, langfilter, nvencc_cmd, presets
 from . import gpu as gpu_mod
 from . import run as run_mod
 from .probe import probe_file
 
-DEFAULT_EXTENSIONS = {".mkv", ".mp4", ".m4v", ".ts", ".mov"}
-SKIP_DIR_NAMES = {"@eaDir", "#recycle"}
-
-
-def _human_size(n: int | None) -> str:
-    if not n:
-        return "0 B"
-    value = float(n)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(value) < 1024:
-            return f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{value:.1f} PB"
+DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".ts", ".mov"})
 
 
 def _resolve(cli_value, config_value):
     """CLI flag wins if explicitly passed (argparse default is None for
     these), else fall back to the resolved .env/environment config value."""
     return cli_value if cli_value is not None else config_value
-
-
-def _walk_media_files(root: Path, path_filter: str | None = None, limit: int | None = None):
-    count = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(
-            d for d in dirnames if d not in SKIP_DIR_NAMES and not d.startswith(".")
-        )
-        if Path(dirpath) == root:
-            continue  # loose files at the library root aren't organized into Movies/TV Shows yet
-        for name in sorted(filenames):
-            if name.startswith("."):
-                continue
-            if Path(name).suffix.lower() not in DEFAULT_EXTENSIONS:
-                continue
-            abs_path = Path(dirpath) / name
-            rel = str(abs_path.relative_to(root))
-            if path_filter and path_filter.lower() not in rel.lower():
-                continue
-            yield abs_path
-            count += 1
-            if limit and count >= limit:
-                return
 
 
 def cmd_probe(args):
@@ -60,7 +29,9 @@ def cmd_probe(args):
     subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
     single_audio_track = not args.all_audio_tracks
 
-    for abs_path in _walk_media_files(root, args.path, args.limit):
+    for abs_path in walk_media_files(
+        root, DEFAULT_EXTENSIONS, path_filter=args.path, limit=args.limit
+    ):
         rel = abs_path.relative_to(root)
         try:
             probed = probe_file(abs_path)
@@ -85,7 +56,7 @@ def cmd_probe(args):
             dynamic_range = "SDR"
         tier = presets.resolution_tier(video["height"])
         preset = presets.select_preset(video["height"], args.profile, hdr)
-        size_desc = _human_size(probed["format"].get("size"))
+        size_desc = human_size(probed["format"].get("size"))
         nvencc_ok = nvencc_cmd.nvencc_available()
         gpu_index = gpu_mod.detect_av1_nvenc_gpu()
         try:
@@ -201,8 +172,16 @@ def cmd_run(args):
             "originals will be permanently deleted, not backed up."
         )
 
+    exclude_dirs = frozenset(
+        p.resolve()
+        for p in (output_dir, Path(backup_dir) if backup_dir else None, log_dir)
+        if p is not None
+    )
+
     changed = planned = errors = 0
-    for abs_path in _walk_media_files(root, args.path, args.limit):
+    for abs_path in walk_media_files(
+        root, DEFAULT_EXTENSIONS, path_filter=args.path, limit=args.limit, exclude_dirs=exclude_dirs
+    ):
         rel = abs_path.relative_to(root)
 
         def _print_progress(line: str, rel: Path = rel) -> None:
@@ -225,6 +204,7 @@ def cmd_run(args):
             output_dir=output_dir,
             cover_image_path=cover_image_path,
             auto_cover_art=auto_cover_art,
+            overwrite_existing=args.overwrite_existing,
             on_progress=_print_progress if args.yes else None,
         )
         if result.status == "planned":
@@ -255,11 +235,11 @@ def cmd_purge_backups(args):
         return
     size = sum(f.stat().st_size for f in backup_dir.rglob("*") if f.is_file())
     if not args.yes:
-        print(f"Would permanently delete {backup_dir} ({_human_size(size)}).")
+        print(f"Would permanently delete {backup_dir} ({human_size(size)}).")
         print("Re-run with --yes to confirm.")
         return
     shutil.rmtree(backup_dir)
-    print(f"Deleted {backup_dir} ({_human_size(size)} freed).")
+    print(f"Deleted {backup_dir} ({human_size(size)} freed).")
 
 
 def _add_language_args(sp: argparse.ArgumentParser) -> None:
@@ -350,10 +330,19 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
     sp.add_argument(
         "--output-dir",
         default=None,
-        help="Write converted files here (mirroring each file's path relative to --root) "
-        "instead of swapping in place. When set, the original source is never touched -- "
-        "no backup/delete happens at all. Default: AV1TRANSCODE_OUTPUT_DIR from .env, or "
-        "in-place if neither is set.",
+        help="Write converted files directly into this directory under their own filename "
+        "(flat -- not mirroring each file's path relative to --root) instead of swapping in "
+        "place. When set, the original source is never touched -- no backup/delete happens "
+        "at all. A destination filename that already exists is left alone and reported as "
+        "an error unless --overwrite-existing is passed. Default: AV1TRANSCODE_OUTPUT_DIR "
+        "from .env, or in-place if neither is set.",
+    )
+    sp.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        help="When --output-dir is set and the destination filename already exists, replace "
+        "it instead of bailing out with an error (default: refuse and leave the existing "
+        "file alone)",
     )
     sp.add_argument(
         "--no-backup", action="store_true", help="Delete originals instead of backing them up"
@@ -420,22 +409,19 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
     return p
 
 
-def _find_library_root(start: Path) -> Path:
-    """Same convention as media-library/scripts/mediatools/cli.py: the
-    library root is wherever the `.agents` repo containing this script is
-    checked out into."""
-    for ancestor in start.parents:
-        if ancestor.name == ".agents":
-            return ancestor.parent
-    return start.parent.parent.parent.parent.parent.parent
-
-
 def main(argv=None):
-    default_root = (
-        os.environ.get("AV1TRANSCODE_ROOT")
-        or os.environ.get("MEDIATOOLS_ROOT")
-        or str(_find_library_root(Path(__file__).resolve()))
-    )
+    try:
+        default_root = (
+            os.environ.get("AV1TRANSCODE_ROOT")
+            or os.environ.get("MEDIATOOLS_ROOT")
+            or str(find_library_root(find_own_script_path(__file__)))
+        )
+    except RuntimeError as exc:
+        print(
+            f"{exc}. Pass --root explicitly, or set AV1TRANSCODE_ROOT.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     parser = build_parser(default_root)
     args = parser.parse_args(argv)
     if args.command == "purge-backups" and args.backup_dir is None:

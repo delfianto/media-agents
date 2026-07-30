@@ -369,13 +369,17 @@ def transcode_one(
     output_dir: Path | None = None,
     cover_image_path: Path | None = None,
     auto_cover_art: bool = True,
+    overwrite_existing: bool = False,
     on_progress: Callable[[str], None] | None = None,
 ) -> tuple[TranscodeResult, dict | None]:
-    """When `output_dir` is set, the converted file is written there
-    (mirroring `abs_path`'s path relative to `root`) and the original source
-    is left completely untouched -- no backup/delete step at all, since
-    nothing about the source changed. `backup_dir` only applies to the
-    default in-place mode, where the source *is* replaced.
+    """When `output_dir` is set, the converted file is written directly into
+    that directory under its own filename (flat -- not mirroring `abs_path`'s
+    directory structure relative to `root`) and the original source is left
+    completely untouched -- no backup/delete step at all, since nothing
+    about the source changed. A destination filename that already exists is
+    left alone and reported as an error unless `overwrite_existing` is set.
+    `backup_dir` only applies to the default in-place mode, where the source
+    *is* replaced.
 
     Cover art: `cover_image_path` forces a specific image; otherwise, if
     `auto_cover_art` (the default), `find_sidecar_cover` looks for a
@@ -404,8 +408,21 @@ def transcode_one(
     hdr = colorinfo.is_hdr(video)
     preset = presets.select_preset(video["height"], profile, hdr)
     final_path = (
-        (output_dir / rel).with_suffix(".mkv") if output_dir else abs_path.with_suffix(".mkv")
+        (output_dir / abs_path.name).with_suffix(".mkv")
+        if output_dir
+        else abs_path.with_suffix(".mkv")
     )
+
+    if output_dir is not None and final_path.exists() and not overwrite_existing:
+        return (
+            TranscodeResult(
+                str(rel),
+                "error",
+                f"destination already exists: {final_path} "
+                "(pass --overwrite-existing to replace it)",
+            ),
+            probed,
+        )
 
     if not execute:
         cmd = build_encode_command(
@@ -470,14 +487,18 @@ def transcode_one(
             return TranscodeResult(str(rel), "error", f"verification failed: {detail}"), probed
 
         if output_dir is not None:
-            # A different location entirely, and the source is never
-            # touched -- final_path can never legitimately already exist as
-            # "the thing about to be replaced" the way it can in-place, so
-            # check before doing anything rather than after.
-            if final_path.exists():
+            # Re-checked here (in addition to the early check above) in case
+            # something created final_path during the encode itself -- a
+            # multi-hour window is plenty of time for that race.
+            if final_path.exists() and not overwrite_existing:
                 tmp_path.unlink(missing_ok=True)
                 return (
-                    TranscodeResult(str(rel), "error", f"destination already exists: {final_path}"),
+                    TranscodeResult(
+                        str(rel),
+                        "error",
+                        f"destination already exists: {final_path} "
+                        "(pass --overwrite-existing to replace it)",
+                    ),
                     probed,
                 )
             final_path.parent.mkdir(parents=True, exist_ok=True)

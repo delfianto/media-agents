@@ -3,17 +3,9 @@ third-party table libraries -- this is meant to run anywhere ffmpeg does."""
 
 from collections import Counter
 
+from medialib.humansize import human_size
+
 from . import langs, track_policy
-
-
-def human_size(n):
-    if not n:
-        return "0 B"
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(n) < 1024:
-            return f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} PB"
 
 
 def human_duration(seconds):

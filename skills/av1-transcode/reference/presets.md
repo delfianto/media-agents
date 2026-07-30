@@ -53,4 +53,4 @@ This is a safety net, not a target: on a genuine high-bitrate remux source the c
 
 ## Output location
 
-Defaults to in-place (same swap-behind-a-backup model as media-library's `apply`). `--output-dir` (or `AV1TRANSCODE_OUTPUT_DIR`) writes the converted file to a separate directory instead, mirroring each source file's path relative to `--root` — in that mode the original source is never touched at all (no backup, no delete), since nothing about it changed.
+Defaults to in-place (same swap-behind-a-backup model as media-library's `apply`). `--output-dir` (or `AV1TRANSCODE_OUTPUT_DIR`) writes the converted file to a separate directory instead, flat under the source's own filename (not mirroring its path relative to `--root`) — in that mode the original source is never touched at all (no backup, no delete), since nothing about it changed. A pre-existing file at the destination is left alone (error) unless `--overwrite-existing` is passed.

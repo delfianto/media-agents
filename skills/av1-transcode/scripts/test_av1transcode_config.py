@@ -2,15 +2,9 @@ from __future__ import annotations
 
 from av1transcode import config
 
-
-def test_parse_dotenv_basic():
-    text = "KEY_A=value_a\nKEY_B = value_b \n"
-    assert config.parse_dotenv(text) == {"KEY_A": "value_a", "KEY_B": "value_b"}
-
-
-def test_parse_dotenv_ignores_comments_and_blank_lines():
-    text = "\n# a comment\nKEY=value\n   \n# KEY2=commented_out\n"
-    assert config.parse_dotenv(text) == {"KEY": "value"}
+# parse_dotenv itself is tested once, centrally, in lib/test_dotenv.py --
+# these tests only cover load_config's own behavior (required/optional keys,
+# defaults, env-vs-file precedence).
 
 
 def _write_env(tmp_path, contents):

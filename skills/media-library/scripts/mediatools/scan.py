@@ -10,38 +10,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-DEFAULT_EXTENSIONS = {".mkv", ".mp4", ".m4v", ".avi", ".ts", ".mov", ".wmv"}
+from medialib.walk import walk_media_files
+
+DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".avi", ".ts", ".mov", ".wmv"})
 CACHE_VERSION = 1
-
-# Non-dot directories we never want to descend into (dot-directories --
-# .agents, .cache, .git, .claude, etc. -- are already excluded generically
-# below regardless of name).
-SKIP_DIR_NAMES = {"@eaDir", "#recycle"}
-
-
-def walk_media_files(root, extensions=None):
-    extensions = extensions or DEFAULT_EXTENSIONS
-    root = Path(root)
-    for dirpath, dirnames, filenames in _os_walk_sorted(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIR_NAMES and not d.startswith(".")]
-        if Path(dirpath) == root:
-            continue  # skip loose files sitting directly at the library root, not yet
-            # organized into Movies/ or TV Shows/ - e.g. a freshly-downloaded file
-            # awaiting sorting shouldn't be touched by an automated pass.
-        for name in filenames:
-            if name.startswith("."):
-                continue  # skip our own in-flight .*.mediatools-tmp.* files, dotfiles
-            if Path(name).suffix.lower() in extensions:
-                yield Path(dirpath) / name
-
-
-def _os_walk_sorted(root):
-    import os
-
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        filenames.sort()
-        yield dirpath, dirnames, filenames
 
 
 def probe_file(path):
@@ -137,7 +109,7 @@ def scan(root, cache_path, extensions=None, jobs=8, force=False, on_progress=Non
     cache = load_cache(cache_path)
     files_cache = cache["files"]
 
-    all_files = list(walk_media_files(root, extensions))
+    all_files = list(walk_media_files(root, extensions or DEFAULT_EXTENSIONS))
     seen_rel_paths = set()
     to_probe = []
 

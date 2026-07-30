@@ -16,8 +16,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from medialib.walk import walk_media_files
+
 from . import remux_ffmpeg, remux_mkv, track_policy
-from .scan import probe_file, walk_media_files
+from .scan import DEFAULT_EXTENSIONS, probe_file
 
 DECODE_SPOT_CHECK_SECONDS = 3
 
@@ -26,16 +28,14 @@ def get_backend(path):
     return remux_mkv if str(path).lower().endswith(".mkv") else remux_ffmpeg
 
 
-def iter_target_files(root, path_filter=None, limit=None):
-    count = 0
-    for p in walk_media_files(root):
-        rel = str(p.relative_to(root))
-        if path_filter and path_filter.lower() not in rel.lower():
-            continue
-        yield p
-        count += 1
-        if limit and count >= limit:
-            return
+def iter_target_files(root, path_filter=None, limit=None, exclude_dirs=frozenset()):
+    yield from walk_media_files(
+        Path(root),
+        DEFAULT_EXTENSIONS,
+        path_filter=path_filter,
+        limit=limit,
+        exclude_dirs=exclude_dirs,
+    )
 
 
 def candidates_from_cache(cache, policy, path_filter=None):

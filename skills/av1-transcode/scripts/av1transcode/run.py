@@ -14,9 +14,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO
 
-from . import colorinfo, langfilter, nvencc_cmd, presets
+from medialib import av1_backend, colorinfo
+from medialib import av1_presets as presets
+from medialib.grain import GrainMeasurement, measure_grain
+from medialib.videoprobe import probe_file
+
 from . import command as command_mod
-from .probe import probe_file
+from . import langfilter, nvencc_cmd
 
 DECODE_SPOT_CHECK_SECONDS = 3
 DEFAULT_PROGRESS_INTERVAL = 10.0  # seconds between throttled progress lines to stdout
@@ -63,62 +67,6 @@ class TranscodeResult:
         self.rel = rel
         self.status = status  # "changed" | "planned" | "unchanged" | "error"
         self.detail = detail
-
-
-def choose_backend(
-    video: dict,
-    requested: str,
-    gpu_index: int | None,
-    nvencc_ok: bool | None = None,
-) -> str:
-    """Resolve 'auto' into 'cpu' or 'nvenc'.
-
-    Dolby Vision / HDR10+ cannot be preserved by plain ffmpeg `av1_nvenc`.
-    When `nvencc` is available those sources stay on the GPU path (NVEncC
-    attaches RPU / HDR10+). Without nvencc, DV falls back to CPU
-    (libsvtav1 `-dolbyvision`); forcing `--backend nvenc` on DV without
-    nvencc is an error rather than a silent metadata drop.
-    """
-    if nvencc_ok is None:
-        nvencc_ok = nvencc_cmd.nvencc_available()
-    needs_dyn = colorinfo.needs_dynamic_metadata_path(video)
-
-    if requested == "cpu":
-        return "cpu"
-    if requested == "nvenc":
-        if gpu_index is None:
-            raise ValueError("nvenc backend requested but no AV1-capable GPU is available")
-        if colorinfo.has_dolby_vision(video) and not nvencc_ok:
-            raise ValueError(
-                "source has Dolby Vision metadata; plain ffmpeg av1_nvenc would drop it "
-                "and nvencc was not found on PATH -- install nvencc (rigaya NVEnc) or "
-                "pass --backend cpu (libsvtav1 preserves RPU via -dolbyvision)"
-            )
-        return "nvenc"
-    # auto
-    if gpu_index is None:
-        return "cpu"
-    if needs_dyn and colorinfo.has_dolby_vision(video) and not nvencc_ok:
-        return "cpu"
-    return "nvenc"
-
-
-def choose_encode_engine(backend: str, video: dict, nvencc_ok: bool | None = None) -> str:
-    """Return 'ffmpeg' or 'nvencc' for the concrete encode tool.
-
-    Dynamic metadata on a GPU backend requires nvencc; everything else uses
-    the existing ffmpeg builders (libsvtav1 or av1_nvenc).
-    """
-    if nvencc_ok is None:
-        nvencc_ok = nvencc_cmd.nvencc_available()
-    if backend == "nvenc" and colorinfo.needs_dynamic_metadata_path(video):
-        if not nvencc_ok:
-            # HDR10+ without nvencc: fall through to ffmpeg (static HDR only).
-            # DV without nvencc should never reach here for explicit nvenc
-            # (choose_backend errors); auto already rewrote to cpu.
-            return "ffmpeg"
-        return "nvencc"
-    return "ffmpeg"
 
 
 def _iter_ffmpeg_lines(stream: IO[str]):
@@ -373,6 +321,8 @@ def transcode_one(
     auto_cover_art: bool = True,
     overwrite_existing: bool = False,
     on_progress: Callable[[str], None] | None = None,
+    grain_routing: bool = True,
+    grain_threshold: float = av1_backend.GRAIN_CPU_THRESHOLD,
 ) -> tuple[TranscodeResult, dict | None]:
     """When `output_dir` is set, the converted file is written directly into
     that directory under its own filename (flat -- not mirroring `abs_path`'s
@@ -400,10 +350,22 @@ def transcode_one(
     if video is None:
         return TranscodeResult(str(rel), "error", "no video stream found"), probed
 
-    nvencc_ok = nvencc_cmd.nvencc_available()
+    nvencc_ok = av1_backend.nvencc_available()
+    grain: GrainMeasurement | None = None
+    if grain_routing and av1_backend.grain_routing_applies(
+        backend_pref, video, gpu_index, nvencc_ok
+    ):
+        grain = measure_grain(abs_path, probed["format"].get("duration"))
     try:
-        backend = choose_backend(video, backend_pref, gpu_index, nvencc_ok=nvencc_ok)
-        engine = choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
+        backend = av1_backend.choose_backend(
+            video,
+            backend_pref,
+            gpu_index,
+            nvencc_ok=nvencc_ok,
+            grain_score=grain.score if grain else None,
+            grain_threshold=grain_threshold,
+        )
+        engine = av1_backend.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
     except ValueError as exc:
         return TranscodeResult(str(rel), "error", str(exc)), probed
 
@@ -445,6 +407,8 @@ def transcode_one(
         detail = " ".join(str(c) for c in cmd)
         if engine == "nvencc" and resolved_cover is not None:
             detail += f" && ffmpeg-cover-attach {resolved_cover}"
+        if grain is not None:
+            detail = f"[grain={grain.score:.4f}] {detail}"
         return TranscodeResult(str(rel), "planned", detail), probed
 
     # Written inside the actual target directory (output_dir when set, else
@@ -527,6 +491,8 @@ def transcode_one(
 
         shutil.move(str(tmp_path), str(final_path))
         label = f"{engine}/{backend}/{preset.name}"
+        if grain is not None:
+            label += f" (grain={grain.score:.4f})"
         return TranscodeResult(str(rel), "changed", f"{label}: {detail}"), probed
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)

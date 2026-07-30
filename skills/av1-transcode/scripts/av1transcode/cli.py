@@ -4,14 +4,17 @@ import shutil
 import sys
 from pathlib import Path
 
+from medialib import av1_backend, colorinfo
+from medialib import av1_presets as presets
 from medialib.gpu import detect_av1_nvenc_gpu
+from medialib.grain import GRAIN_CPU_THRESHOLD, measure_grain
 from medialib.humansize import human_size
 from medialib.libroot import find_library_root, find_own_script_path
+from medialib.videoprobe import probe_file
 from medialib.walk import walk_media_files
 
-from . import colorinfo, config, langfilter, nvencc_cmd, presets
+from . import config, langfilter
 from . import run as run_mod
-from .probe import probe_file
 
 DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".ts", ".mov"})
 
@@ -57,11 +60,23 @@ def cmd_probe(args):
         tier = presets.resolution_tier(video["height"])
         preset = presets.select_preset(video["height"], args.profile, hdr)
         size_desc = human_size(probed["format"].get("size"))
-        nvencc_ok = nvencc_cmd.nvencc_available()
+        nvencc_ok = av1_backend.nvencc_available()
         gpu_index = detect_av1_nvenc_gpu()
+        grain = None
+        if not args.no_grain_routing and av1_backend.grain_routing_applies(
+            "auto", video, gpu_index, nvencc_ok
+        ):
+            grain = measure_grain(abs_path, probed["format"].get("duration"))
         try:
-            backend = run_mod.choose_backend(video, "auto", gpu_index, nvencc_ok=nvencc_ok)
-            engine = run_mod.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
+            backend = av1_backend.choose_backend(
+                video,
+                "auto",
+                gpu_index,
+                nvencc_ok=nvencc_ok,
+                grain_score=grain.score if grain else None,
+                grain_threshold=args.grain_threshold,
+            )
+            engine = av1_backend.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
         except ValueError as exc:
             backend, engine = "?", f"error: {exc}"
 
@@ -88,6 +103,15 @@ def cmd_probe(args):
         print(f"      preset: {preset.name} -- {preset.description}")
         nvencc_label = "yes" if nvencc_ok else "no"
         print(f"      auto backend: {backend} via {engine}  (nvencc={nvencc_label})")
+        if grain is not None:
+            verdict = "cpu preferred" if grain.score >= args.grain_threshold else "clean"
+            samples = ", ".join(f"{s:.4f}" for s in grain.samples)
+            print(
+                f"      grain: {grain.score:.4f} ({verdict}, threshold={args.grain_threshold:.4f}, "
+                f"samples=[{samples}])"
+            )
+        elif args.no_grain_routing and gpu_index is not None:
+            print("      grain: skipped (--no-grain-routing)")
         audio_line = f"      audio:  {audio_desc}"
         if audio_fallback:
             audio_line += " (fallback: no track matched)"
@@ -206,6 +230,8 @@ def cmd_run(args):
             auto_cover_art=auto_cover_art,
             overwrite_existing=args.overwrite_existing,
             on_progress=_print_progress if args.yes else None,
+            grain_routing=not args.no_grain_routing,
+            grain_threshold=args.grain_threshold,
         )
         if result.status == "planned":
             planned += 1
@@ -240,6 +266,25 @@ def cmd_purge_backups(args):
         return
     shutil.rmtree(backup_dir)
     print(f"Deleted {backup_dir} ({human_size(size)} freed).")
+
+
+def _add_grain_args(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--grain-threshold",
+        type=float,
+        default=GRAIN_CPU_THRESHOLD,
+        help="Grain/noise score (1 - denoise-diff SSIM, see medialib.grain and "
+        f"reference/presets.md) at or above which --backend auto prefers cpu over nvenc "
+        f"even when a GPU is available (default: {GRAIN_CPU_THRESHOLD} -- provisional, "
+        "calibrated against only a handful of real titles so far). Only checked when a "
+        "GPU is present and Dolby Vision isn't already forcing cpu regardless.",
+    )
+    sp.add_argument(
+        "--no-grain-routing",
+        action="store_true",
+        help="Don't measure per-file grain/noise at all -- --backend auto falls back to its "
+        "pre-grain behavior (nvenc whenever a GPU is available; DV/HDR10+ rules unchanged)",
+    )
 
 
 def _add_language_args(sp: argparse.ArgumentParser) -> None:
@@ -294,6 +339,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         help="Preview keeping every matching-language audio track instead of just the single "
         "highest-quality one",
     )
+    _add_grain_args(sp)
     sp.set_defaults(func=cmd_probe)
 
     sp = sub.add_parser("list-presets", help="Print the built-in resolution x profile preset table")
@@ -385,6 +431,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         action="store_true",
         help="Disable the source-relative bitrate ceiling entirely (pure CRF/CQ, no maximum)",
     )
+    _add_grain_args(sp)
     sp.add_argument(
         "--cover-image",
         default=None,

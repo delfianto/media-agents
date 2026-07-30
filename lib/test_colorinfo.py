@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from av1transcode import colorinfo
+from medialib import colorinfo
 
 # Real side_data_list fields, captured directly with ffprobe against this
 # library's own 4K remux (Mission: Impossible - The Final Reckoning, HEVC

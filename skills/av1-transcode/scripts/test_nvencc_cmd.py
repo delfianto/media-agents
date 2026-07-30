@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from av1transcode import colorinfo, nvencc_cmd, presets
+from av1transcode import nvencc_cmd
+from medialib import av1_presets as presets
+from medialib import colorinfo
 
 
 def _probed(*, video_extra=None, audio=None, subtitles=None):

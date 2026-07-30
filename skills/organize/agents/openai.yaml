@@ -1,0 +1,4 @@
+interface:
+  display_name: "Organize"
+  short_description: "Identify and organize media library files"
+  default_prompt: "Use $organize to identify and organize these inbox media files safely."

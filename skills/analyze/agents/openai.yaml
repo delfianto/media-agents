@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze"
+  short_description: "Preview AV1 encoding decisions safely"
+  default_prompt: "Use $analyze to preview and explain the AV1 encoding decision for this media without changing it."

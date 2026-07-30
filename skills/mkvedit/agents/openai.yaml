@@ -1,0 +1,4 @@
+interface:
+  display_name: "MKV Edit"
+  short_description: "Safely edit Matroska metadata in place"
+  default_prompt: "Use $mkvedit to plan safe in-place metadata edits for these MKV files."

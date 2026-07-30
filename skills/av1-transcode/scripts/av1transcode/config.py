@@ -1,7 +1,7 @@
-"""Optional `.env`-file configuration -- mirrors media-organizer's
+"""Optional `.env`-file configuration -- mirrors organize's
 config.py pattern (KEY=VALUE lines, real process environment always
 overrides the file) but everything here is optional: unlike
-media-organizer, nothing this skill does needs an external credential, so
+organize, nothing this skill does needs an external credential, so
 there's no equivalent of a required TMDB_API_KEY. `.env` just lets a
 preferred output directory / default languages / bitrate-cap fraction
 persist across invocations instead of being retyped as CLI flags every
@@ -9,7 +9,7 @@ time -- any flag explicitly passed on the command line still wins over
 both the real environment and the file (see cli.py's `_resolve` helper).
 
 The actual KEY=VALUE parsing lives in medialib.dotenv (shared with
-media-organizer's identical config.py pattern); `parse_dotenv` is re-exported
+organize's identical config.py pattern); `parse_dotenv` is re-exported
 here so it stays part of this module's public API for existing callers/tests.
 """
 

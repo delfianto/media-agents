@@ -1,0 +1,4 @@
+interface:
+  display_name: "Track Strip"
+  short_description: "Audit and clean media tracks safely"
+  default_prompt: "Use $track-strip to inspect and safely clean audio or subtitle tracks in this media library."

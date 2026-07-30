@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--category",
-        help="Only show checks in this category (e.g. av1-transcode, media-organizer)",
+        help="Only show checks in this category (e.g. av1-transcode, organize, mkvedit)",
     )
     parser.add_argument(
         "--required-only",

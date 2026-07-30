@@ -1,0 +1,4 @@
+interface:
+  display_name: "Environment Check"
+  short_description: "Audit media skill prerequisites safely"
+  default_prompt: "Use $env-check to audit whether this machine is ready to run the media skills."

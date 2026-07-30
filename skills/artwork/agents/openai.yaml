@@ -1,0 +1,4 @@
+interface:
+  display_name: "Artwork"
+  short_description: "Fetch media artwork and NFO metadata"
+  default_prompt: "Use $artwork to refresh artwork and NFO metadata for this organized media."

@@ -42,7 +42,7 @@ def walk_media_files(
     directly at `root` itself -- e.g. a freshly-downloaded file awaiting
     sorting into Movies/TV Shows shouldn't be touched by an automated pass.
     Pass `skip_root_files=False` when `root` itself is the thing meant to
-    hold loose files (media-organizer's inbox).
+    hold loose files (organize's inbox).
     """
     count = 0
     for dirpath, dirnames, filenames in os.walk(root):

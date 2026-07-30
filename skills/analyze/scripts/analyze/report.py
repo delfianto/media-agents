@@ -120,7 +120,8 @@ def format_analysis(a: FileAnalysis) -> str:
         nvencc_label = "yes" if a.nvencc_ok else "no"
         gpu_label = str(a.gpu_index) if a.gpu_index is not None else "none"
         lines.append(
-            f"    backend: {a.backend} via {a.engine}  (gpu={gpu_label}, nvencc={nvencc_label})"
+            f"    backend: {a.backend} via {a.engine}  "
+            f"(gpu_index={gpu_label}, nvencc={nvencc_label})"
         )
     grain_line = _grain_line(a)
     if grain_line:

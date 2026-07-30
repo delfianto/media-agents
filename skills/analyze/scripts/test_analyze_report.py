@@ -112,6 +112,7 @@ def test_format_analysis_includes_key_facts():
     assert "Some Movie.mkv" in text
     assert "2160p-film" in text
     assert "backend: cpu via" in text
+    assert "gpu_index=0" in text
     assert "grain: 0.0150" in text
     assert "cpu preferred" in text
 

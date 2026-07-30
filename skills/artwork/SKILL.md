@@ -10,8 +10,8 @@ guessit or perform a fresh title match. Use `--tmdb-id N` only for one legacy fi
 without a provider tag.
 
 ```bash
-python3 .agents/skills/artwork/scripts/artwork/__main__.py --path /library/Movies --type all
-python3 .agents/skills/artwork/scripts/artwork/__main__.py --path /library/movie.mkv --type poster --yes
+.agents/scripts/run-skill artwork --path /library/Movies --type all
+.agents/scripts/run-skill artwork --path /library/movie.mkv --type poster --yes
 ```
 
 `--type` accepts `all`, `poster`, `fanart`, `still`, or `nfo`; `still` is episode-only.

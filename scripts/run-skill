@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+usage: run-skill <skill> [arguments...]
+
+skills:
+  analyze  artwork  av1-transcode  env-check  mkvedit  organize  subtitle  track-strip
+EOF
+}
+
+if (( $# == 0 )); then
+    usage
+    exit 2
+fi
+
+skill=$1
+shift
+
+case "$skill" in
+    analyze) module=analyze ;;
+    artwork) module=artwork ;;
+    av1-transcode) module=av1transcode ;;
+    env-check) module=envcheck ;;
+    mkvedit) module=mkvedit ;;
+    organize) module=organize ;;
+    subtitle) module=subtitle ;;
+    track-strip) module=trackstrip ;;
+    *)
+        printf 'unknown skill: %s\n' "$skill" >&2
+        usage
+        exit 2
+        ;;
+esac
+
+launcher_path=${BASH_SOURCE[0]}
+if [[ $launcher_path != /* ]]; then
+    launcher_path=$PWD/$launcher_path
+fi
+repo_root=$(cd -L -- "$(dirname -- "$launcher_path")/.." && pwd -L)
+if [[ -d $PWD/.agents && $PWD/.agents -ef $repo_root ]]; then
+    repo_root=$PWD/.agents
+fi
+
+envrc=$repo_root/.envrc
+if [[ -f $envrc ]]; then
+    allexport_was_set=0
+    [[ $- == *a* ]] && allexport_was_set=1
+    set -a
+    # shellcheck source=/dev/null
+    source "$envrc"
+    (( allexport_was_set )) || set +a
+fi
+
+if [[ -z ${MEDIALIB_ROOT:-} ]]; then
+    if [[ -d $PWD/.agents && $PWD/.agents -ef $repo_root ]]; then
+        MEDIALIB_ROOT=$PWD
+    elif [[ ${repo_root##*/} == .agents ]]; then
+        MEDIALIB_ROOT=${repo_root%/*}
+    fi
+fi
+export MEDIALIB_ROOT
+
+scripts_dir=$repo_root/skills/$skill/scripts
+if [[ -n ${PYTHONPATH:-} ]]; then
+    PYTHONPATH=$repo_root/lib:$scripts_dir:$PYTHONPATH
+else
+    PYTHONPATH=$repo_root/lib:$scripts_dir
+fi
+export PYTHONPATH
+
+uv_args=(run --no-project --python 3.14)
+if [[ $skill == organize ]]; then
+    uv_args+=(--with guessit)
+fi
+
+exec uv "${uv_args[@]}" -m "$module" "$@"

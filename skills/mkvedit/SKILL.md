@@ -21,9 +21,9 @@ payload-dependent headers.
 5. Keep the backup until playback has been verified.
 
 ```bash
-python3 .agents/skills/mkvedit/scripts/mkvedit/__main__.py --path movie.mkv --default-subtitle subtitle:2
-python3 .agents/skills/mkvedit/scripts/mkvedit/__main__.py --path movie.mkv --track audio:1 --language en-US
-python3 .agents/skills/mkvedit/scripts/mkvedit/__main__.py --path movie.mkv --cover poster.jpg --yes
+.agents/scripts/run-skill mkvedit --path movie.mkv --default-subtitle subtitle:2
+.agents/scripts/run-skill mkvedit --path movie.mkv --track audio:1 --language en-US
+.agents/scripts/run-skill mkvedit --path movie.mkv --cover poster.jpg --yes
 ```
 
 Track-scoped edits include `--track-name`, `--delete-track-name`, `--language`, and

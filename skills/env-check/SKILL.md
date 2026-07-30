@@ -17,14 +17,14 @@ It only ever reads: `shutil.which`, `--version`/`-h`-style subprocess calls, `nv
 ## Running it
 
 ```bash
-python3 <path-to-this-skill>/scripts/envcheck/__main__.py
+.agents/scripts/run-skill env-check
 ```
 
 Prints one line per check, grouped by which skill needs it, `OK` (found) / `!!` (missing and required) / `..` (missing but optional -- that skill still works without it, just with reduced functionality), followed by a summary line. Exits `0` if every *required* prerequisite was found, `1` otherwise (so it's usable as a pre-flight gate in a script, not just for a human to read).
 
 ```bash
-python3 scripts/envcheck/__main__.py --category av1-transcode   # only that skill's checks
-python3 scripts/envcheck/__main__.py --required-only             # hide optional/nice-to-have checks
+.agents/scripts/run-skill env-check --category av1-transcode   # only that skill's checks
+.agents/scripts/run-skill env-check --required-only             # hide optional/nice-to-have checks
 ```
 
 ## What gets checked, and why each one matters

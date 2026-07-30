@@ -17,28 +17,30 @@ The toolkit lives at `scripts/analyze/` (next to this file), a thin, zero-third-
 ## Running it
 
 ```bash
-python3 <path-to-this-skill>/scripts/analyze/__main__.py [options]
+.agents/scripts/run-skill analyze [options]
 ```
+
+Run from the media-library root; the launcher loads `.agents/.envrc` before uv starts.
 
 ```bash
 # analyze everything under the library root (can be slow -- grain measurement
 # runs a few short ffmpeg samples per file; narrow with --path first)
-python3 scripts/analyze/__main__.py
+.agents/scripts/run-skill analyze
 
 # analyze one title
-python3 scripts/analyze/__main__.py --path "Some Movie"
+.agents/scripts/run-skill analyze --path "Some Movie"
 
 # anime/cartoon sources: --profile is never auto-detected, same reasoning as av1-transcode
-python3 scripts/analyze/__main__.py --path "Some Anime" --profile anime
+.agents/scripts/run-skill analyze --path "Some Anime" --profile anime
 
 # machine-readable output, one JSON object per file, for scripting
-python3 scripts/analyze/__main__.py --path "Some Movie" --json
+.agents/scripts/run-skill analyze --path "Some Movie" --json
 
 # skip grain measurement entirely (faster, reports the pre-grain backend decision)
-python3 scripts/analyze/__main__.py --path "Some Movie" --no-grain-routing
+.agents/scripts/run-skill analyze --path "Some Movie" --no-grain-routing
 
 # override the grain->cpu threshold for this run without editing code
-python3 scripts/analyze/__main__.py --path "Some Movie" --grain-threshold 0.015
+.agents/scripts/run-skill analyze --path "Some Movie" --grain-threshold 0.015
 ```
 
 Sample text output for one file:
@@ -49,7 +51,7 @@ Some Movie (2001)/Some Movie (2001).mkv
     preset: 1080p-film -- 1080p live-action Blu-ray remux -- the common case
     cpu:   preset=4 crf=22 tune=0 film-grain=10 extra={'enable-variance-boost': '1'}
     nvenc: preset=p7 tune=uhq cq=24 extra={'spatial-aq': '1', 'temporal-aq': '1', 'aq-strength': '10'}
-    backend: cpu via ffmpeg  (gpu=0, nvencc=no)
+    backend: cpu via ffmpeg  (gpu_index=0, nvencc=no)
     grain: 0.0143 (cpu preferred, threshold=0.0120, samples=[0.0131, 0.0149, 0.0148])
 ```
 

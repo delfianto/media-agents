@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from av1transcode import command, presets
+from av1transcode import command
+from medialib import av1_presets as presets
 
 
 def _probed(*, video_bit_rate=None, audio=None, subtitles=None, attachment_count=0):

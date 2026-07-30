@@ -16,7 +16,10 @@ real one, and so language/quality filtering has something precise to filter.
 
 from pathlib import Path
 
-from . import colorinfo, langfilter, presets
+from medialib import av1_presets as presets
+from medialib import colorinfo
+
+from . import langfilter
 
 _IMAGE_MIMETYPES = {
     ".jpg": "image/jpeg",

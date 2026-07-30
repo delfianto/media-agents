@@ -17,9 +17,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from medialib.av1_presets import MAX_BITRATE_FRACTION_OF_SOURCE
 from medialib.dotenv import load_dotenv_file, parse_dotenv
-
-from .presets import MAX_BITRATE_FRACTION_OF_SOURCE
 
 _PREFIX = "AV1TRANSCODE_"
 

@@ -1,5 +1,6 @@
-"""ffprobe wrapper, normalized into the shape presets.py/colorinfo.py/command.py
-consume. Read-only: this module never touches the media file it inspects.
+"""ffprobe wrapper, normalized into the shape colorinfo.py/av1_presets.py/
+av1-transcode's command.py consume. Read-only: this module never touches the
+media file it inspects.
 
 `-show_streams` alone (no extra flags) was confirmed against a real 4K remux
 in this library to fully populate color_primaries/color_transfer/color_space

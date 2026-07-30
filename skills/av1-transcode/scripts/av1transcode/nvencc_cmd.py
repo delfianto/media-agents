@@ -17,10 +17,12 @@ This module is pure argv building + PATH detection (no encode I/O).
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
-from . import colorinfo, langfilter, presets
+from medialib import av1_presets as presets
+from medialib import colorinfo
+
+from . import langfilter
 
 # AV1 Dolby Vision profile: 10.1 is the common backward-compatible single-layer
 # choice for OTT/player compatibility (see reference/presets.md). Smoke-test
@@ -39,10 +41,6 @@ _NVENC_PRESET_TO_NVENCC = {
     "p2": "performance",
     "p1": "performance",
 }
-
-
-def nvencc_available() -> bool:
-    return shutil.which("nvencc") is not None
 
 
 def stream_to_nvencc_track_number(streams: list[dict], stream: dict) -> int:

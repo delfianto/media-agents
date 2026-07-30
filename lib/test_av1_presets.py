@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from av1transcode import presets
+from medialib import av1_presets as presets
 
 
 @pytest.mark.parametrize(

@@ -65,11 +65,11 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     try:
-        default_root = os.environ.get("MEDIATOOLS_ROOT") or str(
+        default_root = os.environ.get("MEDIALIB_ROOT") or str(
             find_library_root(find_own_script_path(__file__))
         )
     except RuntimeError as exc:
-        print(f"{exc}. Pass --root explicitly, or set MEDIATOOLS_ROOT.", file=sys.stderr)
+        print(f"{exc}. Pass --root explicitly, or set MEDIALIB_ROOT.", file=sys.stderr)
         sys.exit(1)
 
     args = build_parser(default_root).parse_args(argv)

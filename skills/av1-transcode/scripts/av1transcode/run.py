@@ -1,9 +1,9 @@
 """Per-file execution: pick a backend, run ffmpeg with a live-streamed and
 persisted log (an AV1 encode runs minutes to hours, not the seconds a
-media-library stream-copy takes, so silently buffering output until exit
+track-strip stream-copy takes, so silently buffering output until exit
 like transcode.py does isn't acceptable here), verify the result, and swap it
 in behind a backup. Same temp-file -> verify -> backup -> swap shape as
-media-library's apply.py, just built for a much longer-running job.
+track-strip's apply.py, just built for a much longer-running job.
 """
 
 import re

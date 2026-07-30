@@ -1,8 +1,8 @@
-"""Tests for mediatools.track_policy.
+"""Tests for trackstrip.track_policy.
 
 Several of these cases are transcribed directly from real files that
 produced a wrong decision during development -- see
-skills/media-library/reference/incidents.md for the full story behind each
+skills/track-strip/reference/incidents.md for the full story behind each
 one. Keeping them as regression tests (rather than one-off manual audits)
 is the point: three of the four SDH false positives were each found on a
 single specific file out of hundreds, and would not have been caught by a
@@ -12,8 +12,8 @@ handful of hand-picked examples.
 from __future__ import annotations
 
 import pytest
-from mediatools import track_policy
-from mediatools.track_policy import Policy, plan_streams
+from trackstrip import track_policy
+from trackstrip.track_policy import Policy, plan_streams
 
 # --- track builder -----------------------------------------------------
 

@@ -159,7 +159,7 @@ def _execute_backend_plan(
         cmd = backend.build_command(abs_path, preview_out, plan_result)
         return ApplyResult(str(rel), "planned", " ".join(str(c) for c in cmd)), plan_result
 
-    tmp_path = abs_path.with_name(f".{abs_path.stem}.mediatools-tmp{abs_path.suffix}")
+    tmp_path = abs_path.with_name(f".{abs_path.stem}.trackstrip-tmp{abs_path.suffix}")
     if tmp_path.exists():
         tmp_path.unlink()
 

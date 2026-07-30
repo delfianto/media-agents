@@ -144,7 +144,7 @@ def cmd_apply(args):
     backup_dir = (
         None
         if args.no_backup
-        else (args.backup_dir or str(root / ".cache" / "mediatools" / "originals"))
+        else (args.backup_dir or str(root / ".cache" / "trackstrip" / "originals"))
     )
 
     if args.yes and backup_dir is None:
@@ -185,7 +185,7 @@ def cmd_transcode(args):
     backup_dir = (
         None
         if args.no_backup
-        else (args.backup_dir or str(root / ".cache" / "mediatools" / "originals"))
+        else (args.backup_dir or str(root / ".cache" / "trackstrip" / "originals"))
     )
 
     if args.yes and backup_dir is None:
@@ -244,7 +244,7 @@ def cmd_purge_backups(args):
 
 def build_parser(default_root, default_cache):
     p = argparse.ArgumentParser(
-        prog="mediatools", description="Plex media library codec/language toolkit"
+        prog="trackstrip", description="Plex media library audio/subtitle track-trimming toolkit"
     )
     p.add_argument("--root", default=default_root, help="Media library root")
     p.add_argument("--cache", default=default_cache, help="Path to scan cache JSON")
@@ -285,7 +285,7 @@ def build_parser(default_root, default_cache):
     )
     sp.add_argument(
         "--backup-dir",
-        help="Where to move stripped originals (default: <root>/.cache/mediatools/originals)",
+        help="Where to move stripped originals (default: <root>/.cache/trackstrip/originals)",
     )
     add_policy_args(sp)
     sp.set_defaults(func=cmd_apply)
@@ -315,7 +315,7 @@ def build_parser(default_root, default_cache):
         "--no-backup", action="store_true", help="Delete originals instead of backing them up"
     )
     sp.add_argument(
-        "--backup-dir", help="Where to move originals (default: <root>/.cache/mediatools/originals)"
+        "--backup-dir", help="Where to move originals (default: <root>/.cache/trackstrip/originals)"
     )
     sp.set_defaults(func=cmd_transcode)
 
@@ -331,17 +331,22 @@ def build_parser(default_root, default_cache):
 
 def main(argv=None):
     try:
-        default_root = os.environ.get("MEDIATOOLS_ROOT") or str(
-            find_library_root(find_own_script_path(__file__))
+        default_root = (
+            os.environ.get("TRACKSTRIP_ROOT")
+            or os.environ.get("MEDIALIB_ROOT")
+            or str(find_library_root(find_own_script_path(__file__)))
         )
     except RuntimeError as exc:
-        print(f"{exc}. Pass --root explicitly, or set MEDIATOOLS_ROOT.", file=sys.stderr)
+        print(
+            f"{exc}. Pass --root explicitly, or set TRACKSTRIP_ROOT/MEDIALIB_ROOT.",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    default_cache = str(Path(default_root) / ".cache" / "mediatools" / "scan.json")
+    default_cache = str(Path(default_root) / ".cache" / "trackstrip" / "scan.json")
     parser = build_parser(default_root, default_cache)
     args = parser.parse_args(argv)
     if args.command == "purge-backups" and args.backup_dir is None:
-        args.backup_dir = str(Path(args.root) / ".cache" / "mediatools" / "originals")
+        args.backup_dir = str(Path(args.root) / ".cache" / "trackstrip" / "originals")
     args.func(args)
 
 

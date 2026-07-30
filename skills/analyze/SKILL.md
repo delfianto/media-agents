@@ -13,33 +13,33 @@ metadata:
 
 `av1-transcode probe` already previews which preset and backend it would pick, but that decision was, until now, opaque on one specific axis: how much of a role a source's actual grain/noise level should play in the cpu-vs-nvenc choice. This skill exists to make that (and the rest of the decision) fully visible on its own, without needing to invoke `av1-transcode` itself -- point it at a file or a `--path` filter and it reports the exact same facts `av1-transcode`'s own heuristics would act on: resolution tier, dynamic range, the resolved preset's concrete encoder settings for both backends, a measured grain/noise score, and the resulting backend/engine decision with the reasoning spelled out.
 
-The toolkit lives at `scripts/analyze.py` (next to this file), a thin, zero-third-party-dependency Python package. It does no encoding decision-making of its own -- every fact it reports comes from `lib/medialib` (`videoprobe`, `colorinfo`, `av1_presets`, `av1_backend`, `grain`), the exact same modules `av1-transcode` itself imports, so this skill's report and `av1-transcode`'s actual behavior can never independently drift out of sync (see root `AGENTS.md`'s `lib/medialib` section for why that matters).
+The toolkit lives at `scripts/analyze/` (next to this file), a thin, zero-third-party-dependency Python package. It does no encoding decision-making of its own -- every fact it reports comes from `lib/medialib` (`videoprobe`, `colorinfo`, `av1_presets`, `av1_backend`, `grain`), the exact same modules `av1-transcode` itself imports, so this skill's report and `av1-transcode`'s actual behavior can never independently drift out of sync (see root `AGENTS.md`'s `lib/medialib` section for why that matters).
 
 ## Running it
 
 ```bash
-python3 <path-to-this-skill>/scripts/analyze.py [options]
+python3 <path-to-this-skill>/scripts/analyze/__main__.py [options]
 ```
 
 ```bash
 # analyze everything under the library root (can be slow -- grain measurement
 # runs a few short ffmpeg samples per file; narrow with --path first)
-python3 scripts/analyze.py
+python3 scripts/analyze/__main__.py
 
 # analyze one title
-python3 scripts/analyze.py --path "Some Movie"
+python3 scripts/analyze/__main__.py --path "Some Movie"
 
 # anime/cartoon sources: --profile is never auto-detected, same reasoning as av1-transcode
-python3 scripts/analyze.py --path "Some Anime" --profile anime
+python3 scripts/analyze/__main__.py --path "Some Anime" --profile anime
 
 # machine-readable output, one JSON object per file, for scripting
-python3 scripts/analyze.py --path "Some Movie" --json
+python3 scripts/analyze/__main__.py --path "Some Movie" --json
 
 # skip grain measurement entirely (faster, reports the pre-grain backend decision)
-python3 scripts/analyze.py --path "Some Movie" --no-grain-routing
+python3 scripts/analyze/__main__.py --path "Some Movie" --no-grain-routing
 
 # override the grain->cpu threshold for this run without editing code
-python3 scripts/analyze.py --path "Some Movie" --grain-threshold 0.015
+python3 scripts/analyze/__main__.py --path "Some Movie" --grain-threshold 0.015
 ```
 
 Sample text output for one file:
@@ -60,7 +60,7 @@ SVT-AV1's `--film-grain` synthesis (denoise before encoding, resynthesize a stat
 
 Grain is measured by denoising a few short samples spread across the file (avoiding opening titles/credits) and comparing each to the original via SSIM -- how much a denoise filter actually changes a sample is a much better proxy for "how much noise is here" than it first seems: a naive bit-plane noise filter (ffmpeg's own `bitplanenoise`) was tried first and rejected after measuring it directly against three real files in this library -- it saturated near its ceiling for almost every compressed source regardless of actual grain, and tracked edge sharpness more than grain (a sharp-lined anime episode scored *noisier* than an actual grainy 35mm scan). See `lib/medialib/grain.py`'s module docstring for the full writeup and the real numbers behind `GRAIN_CPU_THRESHOLD`.
 
-**This threshold is provisional** -- calibrated against only a handful of real titles so far, not a whole-library audit. `--grain-threshold` overrides it per-invocation; recalibrating the default in `medialib/grain.py` should wait until it's been checked against more of this library's actual files, the same way `media-library`'s SDH/anime-detection thresholds were tuned only after whole-library auditing caught real false positives.
+**This threshold is provisional** -- calibrated against only a handful of real titles so far, not a whole-library audit. `--grain-threshold` overrides it per-invocation; recalibrating the default in `medialib/grain.py` should wait until it's been checked against more of this library's actual files, the same way `track-strip`'s SDH/anime-detection thresholds were tuned only after whole-library auditing caught real false positives.
 
 Grain measurement only runs when it could actually change the outcome (`av1_backend.grain_routing_applies`): if there's no GPU at all, or Dolby Vision without `nvencc` already forces `cpu` regardless, the extra ffmpeg sampling passes are skipped automatically -- `--no-grain-routing` skips them unconditionally instead.
 

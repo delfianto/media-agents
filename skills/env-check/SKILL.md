@@ -11,21 +11,21 @@ metadata:
 
 # env-check
 
-Every other skill here assumes a handful of external binaries, Python packages, and (for `av1-transcode`'s GPU path) specific hardware are already present on the machine it runs on -- and each one fails in its own way, at its own time, when one of those is missing (an `av1-transcode` run that dies partway through the first file because `nvencc` isn't installed, a `media-organizer` run that errors on a missing `TMDB_API_KEY` only once it actually needs to look something up, `mediatools.py apply` failing on `mkvmerge` not being on `PATH`). This skill checks all of it up front, in one pass, before any of that.
+Every other skill here assumes a handful of external binaries, Python packages, and (for `av1-transcode`'s GPU path) specific hardware are already present on the machine it runs on -- and each one fails in its own way, at its own time, when one of those is missing (an `av1-transcode` run that dies partway through the first file because `nvencc` isn't installed, a `media-organizer` run that errors on a missing `TMDB_API_KEY` only once it actually needs to look something up, `trackstrip apply` failing on `mkvmerge` not being on `PATH`). This skill checks all of it up front, in one pass, before any of that.
 
 It only ever reads: `shutil.which`, `--version`/`-h`-style subprocess calls, `nvidia-smi`, and Python's own `import`/`os.environ`. It never installs, writes, or deletes anything -- every finding comes with a plain-language suggestion for what to install or configure, but acting on that suggestion is left to the user.
 
 ## Running it
 
 ```bash
-python3 <path-to-this-skill>/scripts/envcheck.py
+python3 <path-to-this-skill>/scripts/envcheck/__main__.py
 ```
 
 Prints one line per check, grouped by which skill needs it, `OK` (found) / `!!` (missing and required) / `..` (missing but optional -- that skill still works without it, just with reduced functionality), followed by a summary line. Exits `0` if every *required* prerequisite was found, `1` otherwise (so it's usable as a pre-flight gate in a script, not just for a human to read).
 
 ```bash
-python3 scripts/envcheck.py --category av1-transcode   # only that skill's checks
-python3 scripts/envcheck.py --required-only             # hide optional/nice-to-have checks
+python3 scripts/envcheck/__main__.py --category av1-transcode   # only that skill's checks
+python3 scripts/envcheck/__main__.py --required-only             # hide optional/nice-to-have checks
 ```
 
 ## What gets checked, and why each one matters
@@ -33,8 +33,8 @@ python3 scripts/envcheck.py --required-only             # hide optional/nice-to-
 | Category | Checks | Required? |
 |---|---|---|
 | `runtime` | Python >= 3.14, `pip` or `uv`, `ruff`, `basedpyright`, `pytest` | Python: yes (hard repo-wide requirement, see root `AGENTS.md`). The rest: no -- only needed for *developing* a skill, not running one. |
-| `shared` | `ffmpeg`, `ffprobe` | Yes -- both `media-library` and `av1-transcode` shell out to these directly. |
-| `media-library` | `mkvmerge` | Yes -- `apply`/`transcode`'s track-selection backend has no fallback. |
+| `shared` | `ffmpeg`, `ffprobe` | Yes -- both `track-strip` and `av1-transcode` shell out to these directly. |
+| `track-strip` | `mkvmerge` | Yes -- `apply`/`transcode`'s track-selection backend has no fallback. |
 | `av1-transcode` | ffmpeg's `libsvtav1` and `av1_nvenc` encoders, an AV1-capable NVIDIA GPU, `nvencc`, `dovi_tool`, `hdr10plus_tool` | `libsvtav1`: yes (the only backend that can re-inject Dolby Vision RPU, and the CPU fallback path). Everything else: no -- GPU/`nvencc`/`dovi_tool`/`hdr10plus_tool` are all optional speed/metadata conveniences with a documented fallback (see `av1-transcode/reference/incidents.md`). |
 | `media-organizer` | `guessit` (Python package), `MEDIAORGANIZER_TMDB_API_KEY`, `MEDIAORGANIZER_OPENSUBTITLES_API_KEY` | `guessit` and the TMDB key: yes -- nothing in that skill works without either. OpenSubtitles: no -- renaming/organizing works without it, only subtitle fetching is skipped. |
 | `stash-app` | `stash-mcp` | No -- only relevant if that MCP server is actually configured for this session (see root `mcp_config.json`). |

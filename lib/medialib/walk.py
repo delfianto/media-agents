@@ -11,7 +11,7 @@ walked. Confirmed for real: an av1-transcode `--output-dir transcode` run
 inside its own `--root` produced a doubly-compressed
 `transcode/transcode/...` copy of the very file `transcode/...` had just
 finished writing (see skills/av1-transcode/reference/incidents.md). That fix
-originally landed only in av1-transcode's own walker; media-library's
+originally landed only in av1-transcode's own walker; track-strip's
 `apply`/`transcode --backup-dir` used a separate, independently-written
 walker with no such guard at all, so the same incident was still fully
 reproducible there. This module exists so the guard only has to be written

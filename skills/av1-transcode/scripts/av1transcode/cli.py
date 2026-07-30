@@ -460,7 +460,7 @@ def main(argv=None):
     try:
         default_root = (
             os.environ.get("AV1TRANSCODE_ROOT")
-            or os.environ.get("MEDIATOOLS_ROOT")
+            or os.environ.get("MEDIALIB_ROOT")
             or str(find_library_root(find_own_script_path(__file__)))
         )
     except RuntimeError as exc:

@@ -3,10 +3,10 @@ picking a single best-quality audio track and preferring plain over SDH
 subtitles once language has narrowed the candidates.
 
 Deliberately simple -- no full anime/commentary policy engine, unlike
-media-library's track_policy.py, which owns that for whole-library track
+track-strip's track_policy.py, which owns that for whole-library track
 selection. This exists so the common case (keep the best English audio
 track, keep plain English subtitles, drop the rest) is available directly
-in av1-transcode without a separate media-library pass first.
+in av1-transcode without a separate track-strip pass first.
 """
 
 # A handful of common ISO 639-1 (2-letter) -> ISO 639-2 (3-letter) aliases,
@@ -101,7 +101,7 @@ def filter_audio(
     contradictory asks. Otherwise: never returns an empty list when
     `audio_streams` is non-empty (falls back to every original track if
     nothing matches `target_lang`, the same "don't guess your way into no
-    audio" principle as media-library's track_policy fallback), and with
+    audio" principle as track-strip's track_policy fallback), and with
     `single=True` (the default) reduces whatever survives language
     filtering down to the single best-quality track via `pick_best_audio`."""
     if not audio_streams:

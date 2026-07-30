@@ -38,12 +38,19 @@ _PROBE_ENCODE_CMD = (
 
 
 def list_gpu_indices() -> list[int]:
-    proc = subprocess.run(
-        ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    try:
+        proc = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        # No `nvidia-smi` at all (e.g. no NVIDIA driver installed) is a real,
+        # common case now that this module also backs env-check's hardware
+        # survey rather than only running on machines already known to have
+        # an NVIDIA GPU -- must be as harmless here as "no GPUs" is.
+        return []
     if proc.returncode != 0:
         return []
     indices = []

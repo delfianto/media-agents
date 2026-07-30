@@ -247,13 +247,15 @@ def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
 
     orig_video = original_probed.get("video") or {}
     new_video = new_probed["video"]
-    # Dolby Vision first: nvencc's DV path often leaves container color_transfer /
-    # mastering-display tags empty even when RPU + DOVI config are present
-    # (confirmed on Dune Part One remux clip: PQ tags gone, rpu_present_flag=1,
-    # dv_profile=10). DV with RPU is sufficient proof of HDR retention.
     if colorinfo.has_dolby_vision(orig_video) and not colorinfo.has_dolby_vision(new_video):
         return False, "source had Dolby Vision but output is missing DOVI configuration record"
-    if colorinfo.is_hdr(orig_video) and not colorinfo.has_dolby_vision(new_video):
+    # Checked regardless of Dolby Vision presence -- nvencc's DV path used to
+    # leave these unset even with RPU/DOVI config intact (see
+    # reference/incidents.md), which this check would have caught if it
+    # hadn't been carved out for exactly that reason. nvencc_cmd.py now sets
+    # them explicitly (colorinfo.nvencc_hdr_args), so there's no longer a
+    # reason a passing DV output should be missing them.
+    if colorinfo.is_hdr(orig_video):
         if not colorinfo.is_hdr(new_video):
             return False, "source was HDR but output lost its PQ/HLG transfer characteristic"
         if orig_video.get("mastering_display") and not new_video.get("mastering_display"):
@@ -445,7 +447,14 @@ def transcode_one(
             detail += f" && ffmpeg-cover-attach {resolved_cover}"
         return TranscodeResult(str(rel), "planned", detail), probed
 
-    tmp_path = abs_path.with_name(f".{abs_path.stem}.av1transcode-tmp.mkv")
+    # Written inside the actual target directory (output_dir when set, else
+    # the source's own directory for in-place mode) -- not tucked next to the
+    # source regardless of where the result is headed, which is confusing to
+    # find and, with --output-dir pointed elsewhere, puts the in-progress file
+    # nowhere near where anyone watching the destination would look for it.
+    tmp_dir = output_dir if output_dir is not None else abs_path.parent
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = tmp_dir / f".{abs_path.stem}.av1transcode-tmp.mkv"
     if tmp_path.exists():
         tmp_path.unlink()
 

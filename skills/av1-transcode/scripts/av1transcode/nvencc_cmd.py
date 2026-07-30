@@ -137,10 +137,13 @@ def build_nvencc_command(
     if colorinfo.has_hdr10_plus(video):
         cmd += ["--dhdr10-info", dhdr10_info]
 
-    # Static HDR colour signalling -- NVEncC also reads source metadata, but
-    # be explicit when ffprobe saw primaries/transfer (harmless on SDR).
-    if video.get("color_primaries") or video.get("color_transfer"):
-        cmd += ["--video-metadata", "copy"]
+    # Explicit color/HDR flags (colorprim/transfer/colormatrix/colorrange/
+    # master-display/max-cll), not "--video-metadata copy" -- that flag only
+    # copies freeform per-stream tags, not bitstream color signaling, and as
+    # a side effect drags forward stale mkvmerge statistics (BPS,
+    # NUMBER_OF_BYTES) from the source's own track. See colorinfo.nvencc_hdr_args.
+    cmd += colorinfo.nvencc_hdr_args(video)
+    cmd += ["--video-metadata", "clear"]
 
     audio_tracks = [stream_to_nvencc_track_number(all_audio, s) for s in kept_audio]
     # Encode only the kept tracks: copy-select then re-encode those to Opus.

@@ -7,7 +7,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["E402"]
 
 [tool.basedpyright]
-include = ["skills"]
+include = ["skills", "lib"]
+extraPaths = ["lib"]
 pythonVersion = "3.14"
 typeCheckingMode = "standard"
 reportMissingTypeStubs = false

@@ -3,32 +3,9 @@ from __future__ import annotations
 import pytest
 from mediaorganizer import config
 
-
-def test_parse_dotenv_basic():
-    text = "KEY_A=value_a\nKEY_B = value_b \n"
-    assert config.parse_dotenv(text) == {"KEY_A": "value_a", "KEY_B": "value_b"}
-
-
-def test_parse_dotenv_ignores_comments_and_blank_lines():
-    text = "\n# a comment\nKEY=value\n   \n# KEY2=commented_out\n"
-    assert config.parse_dotenv(text) == {"KEY": "value"}
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ('KEY="quoted value"', "quoted value"),
-        ("KEY='quoted value'", "quoted value"),
-        ("KEY=unquoted value", "unquoted value"),
-        ("KEY=\"mismatched'", "\"mismatched'"),
-    ],
-)
-def test_parse_dotenv_quote_stripping(raw, expected):
-    assert config.parse_dotenv(raw)["KEY"] == expected
-
-
-def test_parse_dotenv_value_containing_equals_sign():
-    assert config.parse_dotenv("KEY=a=b=c")["KEY"] == "a=b=c"
+# parse_dotenv itself is tested once, centrally, in lib/test_dotenv.py --
+# these tests only cover load_config's own behavior (required keys,
+# defaults, env-vs-file precedence).
 
 
 def _write_env(tmp_path, contents):

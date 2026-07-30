@@ -1,7 +1,8 @@
 import argparse
-import os
 import sys
 from pathlib import Path
+
+from medialib.walk import walk_media_files
 
 from . import organize as organize_mod
 from .config import ConfigError, load_config
@@ -10,28 +11,18 @@ from .organize import VIDEO_EXTENSIONS
 from .parse import parse
 from .tmdb import TmdbClient
 
-SKIP_DIR_NAMES = {"@eaDir", "#recycle"}
-
 
 def _walk_inbox(inbox: Path, path_filter: str | None = None, limit: int | None = None):
-    count = 0
-    for dirpath, dirnames, filenames in os.walk(inbox):
-        dirnames[:] = sorted(
-            d for d in dirnames if d not in SKIP_DIR_NAMES and not d.startswith(".")
-        )
-        for name in sorted(filenames):
-            if name.startswith("."):
-                continue
-            if Path(name).suffix.lower() not in VIDEO_EXTENSIONS:
-                continue
-            abs_path = Path(dirpath) / name
-            rel = str(abs_path.relative_to(inbox))
-            if path_filter and path_filter.lower() not in rel.lower():
-                continue
-            yield abs_path
-            count += 1
-            if limit and count >= limit:
-                return
+    # skip_root_files=False: the inbox itself is where loose, not-yet-sorted
+    # downloads sit -- unlike av1transcode/mediatools, which skip files
+    # directly at their (already-organized) library root.
+    return walk_media_files(
+        inbox,
+        VIDEO_EXTENSIONS,
+        path_filter=path_filter,
+        limit=limit,
+        skip_root_files=False,
+    )
 
 
 def _build_plan(cfg, tmdb, abs_path: Path):

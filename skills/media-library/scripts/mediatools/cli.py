@@ -4,6 +4,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from medialib.libroot import find_library_root, find_own_script_path
+
 from . import apply as apply_mod
 from . import langs, track_policy
 from . import scan as scan_mod
@@ -151,8 +153,10 @@ def cmd_apply(args):
             "originals will be permanently deleted, not backed up."
         )
 
+    exclude_dirs = frozenset({Path(backup_dir).resolve()}) if backup_dir else frozenset()
+
     changed = unchanged = errors = planned = 0
-    for abs_path in apply_mod.iter_target_files(root, args.path, args.limit):
+    for abs_path in apply_mod.iter_target_files(root, args.path, args.limit, exclude_dirs):
         result, plan_result = apply_mod.apply_one(
             abs_path, root, policy, backup_dir, execute=args.yes
         )
@@ -190,8 +194,10 @@ def cmd_transcode(args):
             "originals will be permanently deleted, not backed up."
         )
 
+    exclude_dirs = frozenset({Path(backup_dir).resolve()}) if backup_dir else frozenset()
+
     changed = unchanged = errors = planned = 0
-    for abs_path in apply_mod.iter_target_files(root, args.path, args.limit):
+    for abs_path in apply_mod.iter_target_files(root, args.path, args.limit, exclude_dirs):
         result, plan_result = apply_mod.transcode_one(
             abs_path, root, from_codecs, args.to_codec, args.bitrate, backup_dir, execute=args.yes
         )
@@ -323,24 +329,14 @@ def build_parser(default_root, default_cache):
     return p
 
 
-def _find_library_root(start: Path) -> Path:
-    """The media library root is wherever the `.agents` repo containing this
-    script is checked out into -- i.e. this script's ancestor named
-    `.agents`, one level up. Searching for it by name (rather than counting
-    a fixed number of parents from this file) survives this script moving
-    to a different depth inside skills/<name>/scripts/ later."""
-    for ancestor in start.parents:
-        if ancestor.name == ".agents":
-            return ancestor.parent
-    # Not running from inside a checked-out .agents repo (e.g. invoked some
-    # other way) -- fall back to the conventional depth from this file.
-    return start.parent.parent.parent.parent.parent.parent
-
-
 def main(argv=None):
-    default_root = os.environ.get("MEDIATOOLS_ROOT") or str(
-        _find_library_root(Path(__file__).resolve())
-    )
+    try:
+        default_root = os.environ.get("MEDIATOOLS_ROOT") or str(
+            find_library_root(find_own_script_path(__file__))
+        )
+    except RuntimeError as exc:
+        print(f"{exc}. Pass --root explicitly, or set MEDIATOOLS_ROOT.", file=sys.stderr)
+        sys.exit(1)
     default_cache = str(Path(default_root) / ".cache" / "mediatools" / "scan.json")
     parser = build_parser(default_root, default_cache)
     args = parser.parse_args(argv)

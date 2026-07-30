@@ -21,7 +21,7 @@ from .opensubtitles import OpenSubtitlesClient, OpenSubtitlesError
 from .parse import ParsedName, parse
 from .tmdb import TmdbClient, TmdbError
 
-VIDEO_EXTENSIONS = {".mkv", ".mp4", ".m4v", ".avi", ".ts", ".mov", ".wmv"}
+VIDEO_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".avi", ".ts", ".mov", ".wmv"})
 
 
 @dataclass

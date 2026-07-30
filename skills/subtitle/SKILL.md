@@ -9,8 +9,8 @@ Read the TMDB ID from the organized movie filename or series folder and read epi
 numbers from `SxxEyy`. Do not re-identify titles.
 
 ```bash
-python3 .agents/skills/subtitle/scripts/subtitle/__main__.py --path /library/Movies --language en
-python3 .agents/skills/subtitle/scripts/subtitle/__main__.py --path /library/show.mkv --language en --yes
+.agents/scripts/run-skill subtitle --path /library/Movies --language en
+.agents/scripts/run-skill subtitle --path /library/show.mkv --language en --yes
 ```
 
 Runs are dry-run by default. Existing subtitle files are skipped unless `--overwrite`

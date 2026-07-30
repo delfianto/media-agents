@@ -17,57 +17,59 @@ The toolkit lives at `scripts/av1transcode/` (next to this file), a zero-third-p
 ## Running commands
 
 ```bash
-python3 <path-to-this-skill>/scripts/av1transcode/__main__.py <subcommand> [options]
+.agents/scripts/run-skill av1-transcode <subcommand> [options]
 ```
+
+Run from the media-library root; the launcher loads `.agents/.envrc` before uv starts.
 
 1. **`probe`** - Read-only. Reports each file's resolution/dynamic range (SDR/HDR10/Dolby Vision)/audio layout, and exactly which preset and backend `run` would pick for it.
    ```bash
-   python3 scripts/av1transcode/__main__.py probe --path "Some Movie"
-   python3 scripts/av1transcode/__main__.py probe --path "Some Anime" --profile anime
+   .agents/scripts/run-skill av1-transcode probe --path "Some Movie"
+   .agents/scripts/run-skill av1-transcode probe --path "Some Anime" --profile anime
    ```
 
 2. **`list-presets`** - Prints the full built-in resolution x profile preset table (CPU and GPU settings for each).
    ```bash
-   python3 scripts/av1transcode/__main__.py list-presets
+   .agents/scripts/run-skill av1-transcode list-presets
    ```
 
 3. **`run`** - Re-encodes video to AV1 and audio to Opus. **Defaults to a dry run** that probes the file and prints the exact `ffmpeg` command it would run, touching nothing. Pass `--yes` to actually execute.
    ```bash
    # dry run (safe, default) - always do this first and read the printed command
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie"
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie"
 
    # execute for real, one file/show at a time
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie" --yes
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie" --yes
 
    # anime/cartoon sources: --profile is never auto-detected, see below
-   python3 scripts/av1transcode/__main__.py run --path "Some Anime" --profile anime --yes
+   .agents/scripts/run-skill av1-transcode run --path "Some Anime" --profile anime --yes
 
    # write converted files elsewhere instead of swapping in place -- flat,
    # under their own filename directly in --output-dir (not mirroring the
    # source's directory structure), and the source is never touched in
    # this mode (no backup/delete either)
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie" --output-dir /converted --yes
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie" --output-dir /converted --yes
 
    # --output-dir refuses to clobber a pre-existing file at the destination
    # unless told to
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie" --output-dir /converted --overwrite-existing --yes
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie" --output-dir /converted --overwrite-existing --yes
 
    # keep every audio/subtitle track instead of the single-best-eng-track default
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie" --audio-lang all --subtitle-lang all --yes
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie" --audio-lang all --subtitle-lang all --yes
 
    # force a specific poster instead of auto-detecting poster.jpg/cover.jpg next to the source
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie" --cover-image /path/to/poster.jpg --yes
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie" --cover-image /path/to/poster.jpg --yes
 
    # skip grain measurement (faster dry run), or override its cpu-preference threshold
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie" --no-grain-routing
-   python3 scripts/av1transcode/__main__.py run --path "Some Movie" --grain-threshold 0.015
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie" --no-grain-routing
+   .agents/scripts/run-skill av1-transcode run --path "Some Movie" --grain-threshold 0.015
    ```
    Defaults: `--profile film`, `--backend auto` (GPU if an AV1-capable NVIDIA GPU is found, else CPU; Dolby Vision / HDR10+ on GPU use `nvencc` so dynamic metadata is kept, plain SDR/HDR10 use ffmpeg `av1_nvenc`), `--audio-lang eng` reduced to the single highest-quality matching track, `--subtitle-lang eng` preferring plain over SDH, output bitrate capped to 85% of the source's own bitrate, cover art auto-embedded if a poster/cover image is found next to the source (see "Language filtering, single audio track, and bitrate cap" and "Cover art" below) - every one of these is overridable per-invocation via CLI flag or persistently via `.env` (see "Configuration").
 
 4. **`purge-backups`** - Once re-encoded files have been spot-checked for playback/quality, permanently deletes the backed-up originals.
    ```bash
-   python3 scripts/av1transcode/__main__.py purge-backups         # shows size, asks for --yes
-   python3 scripts/av1transcode/__main__.py purge-backups --yes    # actually deletes
+   .agents/scripts/run-skill av1-transcode purge-backups         # shows size, asks for --yes
+   .agents/scripts/run-skill av1-transcode purge-backups --yes    # actually deletes
    ```
 
 ## Configuration (`.env`, optional)

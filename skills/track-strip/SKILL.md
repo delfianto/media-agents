@@ -18,58 +18,58 @@ Only files inside `Movies/`/`TV Shows/` subdirectories are ever touched - anythi
 
 ## Running commands
 
-Always invoke via `python3`, from anywhere (paths default to this library root automatically - see "Path resolution" below):
+Run from the media-library root through the shared `.envrc`-aware uv launcher:
 
 ```bash
-python3 <path-to-this-skill>/scripts/trackstrip/__main__.py <subcommand> [options]
+.agents/scripts/run-skill track-strip <subcommand> [options]
 ```
 
 Subcommands, in the order you'd normally use them:
 
 1. **`scan`** - Probe every media file with `ffprobe` and update the JSON cache at `<library-root>/.cache/trackstrip/scan.json`. Read-only. Incremental (skips files whose size+mtime match the cache) unless `--force` is passed.
    ```bash
-   python3 scripts/trackstrip/__main__.py scan --jobs 8
+   .agents/scripts/run-skill track-strip scan --jobs 8
    ```
 
 2. **`stats`** - Print codec and language statistics from the cache: video codec/profile/resolution breakdown, audio codec + lossless/lossy split, subtitle codec breakdown, per-language track counts, how many files have non-English audio/subtitles, and an estimate of what the default policy would strip. Read-only; requires `scan` to have run at least once.
    ```bash
-   python3 scripts/trackstrip/__main__.py stats
+   .agents/scripts/run-skill track-strip stats
    ```
 
 3. **`plan`** - Fast, cache-based preview of exactly which tracks `apply` would drop per file, with reasons. Read-only.
    ```bash
-   python3 scripts/trackstrip/__main__.py plan [--path "substring"] [--limit N]
+   .agents/scripts/run-skill track-strip plan [--path "substring"] [--limit N]
    ```
 
 4. **`apply`** - Remux files to drop non-English audio/subtitle tracks (plus whatever other policy flags are set - see the table below). **Defaults to a live, authoritative dry run** (re-probes each file fresh and prints the exact `mkvmerge`/`ffmpeg` command it would run, touching nothing). Pass `--yes` to actually execute.
    ```bash
    # authoritative dry run (safe, default)
-   python3 scripts/trackstrip/__main__.py apply --path "Some Show"
+   .agents/scripts/run-skill track-strip apply --path "Some Show"
 
    # execute for real, for one show first
-   python3 scripts/trackstrip/__main__.py apply --path "Some Show" --yes
+   .agents/scripts/run-skill track-strip apply --path "Some Show" --yes
 
    # execute for the whole library
-   python3 scripts/trackstrip/__main__.py apply --yes
+   .agents/scripts/run-skill track-strip apply --yes
    ```
 
 5. **`transcode`** - Re-encode audio tracks of a given codec to a more compatible one; video and every other track are always stream-copied untouched. For codec-level playback problems rather than language ones - e.g. DTS/DTS-HD MA is muted on some LG TVs over eARC (confirmed on this library: LG has full Dolby licensing for AC-3/E-AC-3/TrueHD/Atmos, but doesn't license DTS decode in most webOS firmware). Same dry-run-by-default and verify-then-swap safety model as `apply`.
    ```bash
-   python3 scripts/trackstrip/__main__.py transcode --path "Some Show"                    # dry run
-   python3 scripts/trackstrip/__main__.py transcode --path "Some Show" --yes --no-backup  # execute
+   .agents/scripts/run-skill track-strip transcode --path "Some Show"                    # dry run
+   .agents/scripts/run-skill track-strip transcode --path "Some Show" --yes --no-backup  # execute
    # defaults: --from-codec dts --to-codec eac3 --bitrate 640k
    ```
    Also use `--drop-audio-codec CODEC` on `plan`/`apply` for files where the problem codec has a working fallback already present (e.g. DTS-HD MA alongside a TrueHD or AC3 track) - a plain track drop rather than a transcode, since no compatible audio would be lost. The safety net doubles as protection here: run `apply --drop-audio-codec dts` library-wide and it will only ever affect files that have another *usable* audio track to fall back to - files where the flagged codec is the only real audio come back `unchanged` automatically, no need to `--path`-filter them out by hand. "Usable" specifically excludes commentary tracks (see the Prometheus incident in `reference/incidents.md` - a real data-loss case this guards against now).
 
 6. **`purge-backups`** - Once you've confirmed the remuxed files play fine, permanently delete the backed-up originals to reclaim disk space.
    ```bash
-   python3 scripts/trackstrip/__main__.py purge-backups         # shows size, asks for --yes
-   python3 scripts/trackstrip/__main__.py purge-backups --yes    # actually deletes
+   .agents/scripts/run-skill track-strip purge-backups         # shows size, asks for --yes
+   .agents/scripts/run-skill track-strip purge-backups --yes    # actually deletes
    ```
 
 ## Path resolution
 
-`trackstrip` finds the library root by walking up from its own location looking for an ancestor directory named `.agents`, then using *that* directory's parent - i.e. wherever this repo is checked out into. Override with `--root`, the `TRACKSTRIP_ROOT` env var, or the `MEDIALIB_ROOT` env var shared with the other skills, if invoking against a different library. The scan cache and backup directory default to `<library-root>/.cache/trackstrip/` - outside this repo, since they're disposable runtime state, not source.
+The launcher derives the library root from the logical `.agents` symlink and exports it as `MEDIALIB_ROOT`. Override with `--root`, `TRACKSTRIP_ROOT`, or `MEDIALIB_ROOT` when invoking against a different library. The scan cache and backup directory default to `<library-root>/.cache/trackstrip/` - outside this repo, since they're disposable runtime state, not source.
 
 ## Track-keep policy (what counts as "non-English")
 

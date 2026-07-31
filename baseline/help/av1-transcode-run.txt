@@ -1,0 +1,98 @@
+usage: av1transcode run [-h] [--path PATH] [--limit LIMIT]
+                        [--profile {film,anime}] [--backend {auto,cpu,nvenc}]
+                        [--yes] [--output-dir OUTPUT_DIR]
+                        [--overwrite-existing] [--no-backup]
+                        [--backup-dir BACKUP_DIR] [--log-dir LOG_DIR]
+                        [--no-subtitles] [--audio-lang AUDIO_LANG]
+                        [--subtitle-lang SUBTITLE_LANG] [--all-audio-tracks]
+                        [--max-bitrate-fraction MAX_BITRATE_FRACTION]
+                        [--no-bitrate-cap] [--grain-threshold GRAIN_THRESHOLD]
+                        [--no-grain-routing] [--cover-image COVER_IMAGE]
+                        [--no-cover-art]
+
+options:
+  -h, --help            show this help message and exit
+  --path PATH           Only consider files whose relative path contains this
+                        substring
+  --limit LIMIT         Stop after N files
+  --profile {film,anime}
+                        Content profile for preset selection (default: film)
+                        -- pick 'anime' explicitly for animation/cartoon
+                        sources, it is never auto-detected from audio language
+  --backend {auto,cpu,nvenc}
+                        Encoder backend (default: auto -- nvenc/GPU if an
+                        AV1-capable NVIDIA GPU is found, else cpu/libsvtav1).
+                        Dolby Vision and HDR10+ on GPU use nvencc (rigaya
+                        NVEnc with libdovi) so RPU/dynamic metadata is
+                        preserved; without nvencc, DV falls back to cpu. Plain
+                        SDR/HDR10 still uses ffmpeg av1_nvenc.
+  --yes                 Actually execute (default is a dry run that prints the
+                        ffmpeg command it would run)
+  --output-dir OUTPUT_DIR
+                        Write converted files directly into this directory
+                        under their own filename (flat -- not mirroring each
+                        file's path relative to --root) instead of swapping in
+                        place. When set, the original source is never touched
+                        -- no backup/delete happens at all. A destination
+                        filename that already exists is left alone and
+                        reported as an error unless --overwrite-existing is
+                        passed. Default: AV1TRANSCODE_OUTPUT_DIR from .env, or
+                        in-place if neither is set.
+  --overwrite-existing  When --output-dir is set and the destination filename
+                        already exists, replace it instead of bailing out with
+                        an error (default: refuse and leave the existing file
+                        alone)
+  --no-backup           Delete originals instead of backing them up
+  --backup-dir BACKUP_DIR
+                        Where to move originals (default:
+                        <root>/.cache/av1transcode/originals) -- ignored when
+                        --output-dir is set
+  --log-dir LOG_DIR     Where to write per-file ffmpeg logs (default:
+                        <root>/.cache/av1transcode/logs)
+  --no-subtitles        Drop subtitle/attachment streams instead of copying
+                        them (use if the source container's subtitle codec
+                        can't mux into Matroska)
+  --audio-lang AUDIO_LANG
+                        Keep only audio tracks matching this language (ISO
+                        639-2, e.g. 'eng'; or 'all' to keep every track).
+                        Default: 'eng', or AV1TRANSCODE_AUDIO_LANG from .env.
+                        Falls back to keeping every track if none match (never
+                        produces a silent file).
+  --subtitle-lang SUBTITLE_LANG
+                        Keep only subtitle tracks matching this language (or
+                        'all' for every track). Default: 'eng', or
+                        AV1TRANSCODE_SUBTITLE_LANG from .env.
+  --all-audio-tracks    Keep and transcode every audio track matching --audio-
+                        lang instead of just the single highest-quality one
+                        (default: pick one -- e.g. a TrueHD Atmos track over a
+                        same-language E-AC3 'compatibility' copy of the same
+                        mix, a real pattern in remuxes with more than one
+                        delivery of the same audio)
+  --max-bitrate-fraction MAX_BITRATE_FRACTION
+                        Cap output video bitrate to this fraction of the
+                        source's own bitrate (default: 0.85, or
+                        AV1TRANSCODE_MAX_BITRATE_FRACTION from .env) -- the
+                        safety net against producing a file larger than the
+                        source on already-efficiently-encoded input.
+  --no-bitrate-cap      Disable the source-relative bitrate ceiling entirely
+                        (pure CRF/CQ, no maximum)
+  --grain-threshold GRAIN_THRESHOLD
+                        Grain/noise score (1 - denoise-diff SSIM, see
+                        medialib.grain and reference/presets.md) at or above
+                        which --backend auto prefers cpu over nvenc even when
+                        a GPU is available (default: 0.012 -- provisional,
+                        calibrated against only a handful of real titles so
+                        far). Only checked when a GPU is present and Dolby
+                        Vision isn't already forcing cpu regardless.
+  --no-grain-routing    Don't measure per-file grain/noise at all -- --backend
+                        auto falls back to its pre-grain behavior (nvenc
+                        whenever a GPU is available; DV/HDR10+ rules
+                        unchanged)
+  --cover-image COVER_IMAGE
+                        Embed this image as Matroska cover art (a proper
+                        attachment, not a video stream) instead of auto-
+                        detecting one
+  --no-cover-art        Don't look for or embed a
+                        poster.jpg/cover.jpg/folder.jpg sitting next to the
+                        source (default: auto-embed one if found, e.g. one
+                        artwork already fetched)

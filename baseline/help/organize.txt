@@ -1,0 +1,15 @@
+Installed 5 packages in 15ms
+usage: organize [-h] [--env-file ENV_FILE] [--inbox INBOX] [--path PATH]
+                [--limit LIMIT] [--yes] [--copy] [--overwrite]
+
+Identify and organize inbox media files
+
+options:
+  -h, --help           show this help message and exit
+  --env-file ENV_FILE
+  --inbox INBOX        Override ORGANIZE_INBOX_DIR
+  --path PATH          Only paths containing this substring
+  --limit LIMIT
+  --yes                Apply the planned file operations
+  --copy               Copy instead of moving
+  --overwrite          Back up and replace an existing destination

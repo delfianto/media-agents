@@ -1,0 +1,23 @@
+usage: trackstrip [-h] [--root ROOT] [--cache CACHE]
+                  {scan,stats,plan,apply,transcode,purge-backups} ...
+
+Plex media library audio/subtitle track-trimming toolkit
+
+positional arguments:
+  {scan,stats,plan,apply,transcode,purge-backups}
+    scan                Probe all media files with ffprobe and update the
+                        cache
+    stats               Print codec/language statistics from the cache
+    plan                Fast cache-based preview of what `apply` would strip
+    apply               Remux files to strip non-English audio/subtitles (dry-
+                        run unless --yes)
+    transcode           Re-encode audio tracks of a given codec to a more
+                        compatible one (dry-run unless --yes); video is always
+                        stream-copied
+    purge-backups       Permanently delete the backup directory of stripped
+                        originals
+
+options:
+  -h, --help            show this help message and exit
+  --root ROOT           Media library root
+  --cache CACHE         Path to scan cache JSON

@@ -1,0 +1,4 @@
+usage: av1transcode list-presets [-h]
+
+options:
+  -h, --help  show this help message and exit

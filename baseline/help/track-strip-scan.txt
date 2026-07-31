@@ -1,0 +1,6 @@
+usage: trackstrip scan [-h] [--jobs JOBS] [--force]
+
+options:
+  -h, --help   show this help message and exit
+  --jobs JOBS  Parallel ffprobe workers (default 8)
+  --force      Re-probe every file, ignoring cache freshness

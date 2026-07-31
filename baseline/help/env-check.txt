@@ -1,0 +1,12 @@
+usage: envcheck [-h] [--category CATEGORY] [--required-only]
+
+Audit this machine for the hardware/software prerequisites this repo's skills
+need, and print install hints for anything missing. Read-only -- never
+installs or changes anything itself.
+
+options:
+  -h, --help           show this help message and exit
+  --category CATEGORY  Only show checks in this category (e.g. av1-transcode,
+                       organize, mkvedit)
+  --required-only      Only show required checks, hiding optional/nice-to-have
+                       ones

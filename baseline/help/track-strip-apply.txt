@@ -1,0 +1,38 @@
+usage: trackstrip apply [-h] [--path PATH] [--limit LIMIT] [--yes]
+                        [--no-backup] [--backup-dir BACKUP_DIR]
+                        [--strip-unknown] [--strip-forced]
+                        [--strip-commentary] [--no-detect-anime]
+                        [--single-audio-track] [--drop-sdh]
+                        [--drop-audio-codec DROP_AUDIO_CODEC]
+
+options:
+  -h, --help            show this help message and exit
+  --path PATH           Only consider files whose relative path contains this
+                        substring
+  --limit LIMIT         Stop after N files
+  --yes                 Actually execute the remux (default is a live dry run)
+  --no-backup           Delete originals instead of backing them up
+  --backup-dir BACKUP_DIR
+                        Where to move stripped originals (default:
+                        <root>/.cache/trackstrip/originals)
+  --strip-unknown       Also strip audio/subtitle tracks tagged und/unknown
+                        language (default: kept)
+  --strip-forced        Also strip non-English forced subtitles (default:
+                        forced subs always kept)
+  --strip-commentary    Also strip English commentary audio tracks (default:
+                        kept)
+  --no-detect-anime     Disable anime handling (Japanese-original releases:
+                        <=2 audio tracks incl. Japanese normally keep JP audio
+                        + EN/JP subs instead of EN audio)
+  --single-audio-track  Keep only one audio track per file (prefers non-
+                        commentary, then the default-flagged track) - drops
+                        downmixes/duplicate-master extras
+  --drop-sdh            Drop SDH subtitle tracks when a plain (non-SDH)
+                        sibling of the same language survives; detected via
+                        disposition flag, title, or byte-size heuristic when
+                        neither is present
+  --drop-audio-codec DROP_AUDIO_CODEC
+                        Comma-separated ffprobe codec_name(s) to drop
+                        regardless of language (e.g. 'dts'). The existing
+                        zero-audio safety net still applies: a file whose ONLY
+                        audio track matches is left untouched, not silenced.

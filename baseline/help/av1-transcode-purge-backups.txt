@@ -1,0 +1,6 @@
+usage: av1transcode purge-backups [-h] [--backup-dir BACKUP_DIR] [--yes]
+
+options:
+  -h, --help            show this help message and exit
+  --backup-dir BACKUP_DIR
+  --yes

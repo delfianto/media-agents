@@ -1,0 +1,14 @@
+NVEnc (x64) 9.27 (r3981) by rigaya, Jul 29 2026 17:56:43 (gcc 15.3.0/Linux)
+  [NVENC API v13.0, CUDA 13.3]
+ reader: raw, y4m, avs, avsw, avhw [H.264/AVC, H.265/HEVC, MPEG2, VP8, VP9, VC-1, MPEG1, MPEG4, AV1]
+ others
+  nvml       : yes
+  nvrtc      : yes
+  nvvfx      : no
+  ngx        : no
+  nvof fruc  : no
+  libass     : yes
+  libdovi    : yes
+  vulkan     : no
+  libplacebo : no
+  vmaf       : yes

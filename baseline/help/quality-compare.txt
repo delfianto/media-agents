@@ -1,0 +1,35 @@
+usage: quality-compare [-h] --reference REFERENCE --distorted DISTORTED
+                       [--media-type {auto,video,image}]
+                       [--mode {quick,deep,full}] [--clips CLIPS]
+                       [--clip-duration CLIP_DURATION]
+                       [--ssimulacra-frames SSIMULACRA_FRAMES]
+                       [--skip-ssimulacra2] [--require-ssimulacra2]
+                       [--threads THREADS] [--json-out JSON_OUT] [--json]
+
+Deep, read-only source-versus-encode comparison: aligned VMAF/PSNR/SSIM for
+video, color-managed SSIM/PSNR/RMSE for images, and optional SSIMULACRA2 for
+both.
+
+options:
+  -h, --help            show this help message and exit
+  --reference REFERENCE
+                        Original/reference media file
+  --distorted DISTORTED
+                        Encoded/distorted media file
+  --media-type {auto,video,image}
+                        Comparison type (default: infer from both file
+                        extensions)
+  --mode {quick,deep,full}
+  --clips CLIPS         Override the number of stratified VMAF clips
+  --clip-duration CLIP_DURATION
+                        Override each VMAF clip duration in seconds
+  --ssimulacra-frames SSIMULACRA_FRAMES
+                        Override the number of stratified SSIMULACRA2 still
+                        frames
+  --skip-ssimulacra2    Skip SSIMULACRA2 even if installed
+  --require-ssimulacra2
+                        Fail instead of continuing when the official
+                        executable is unavailable
+  --threads THREADS     libvmaf worker threads (default: min(16, CPU count))
+  --json-out JSON_OUT   Write full per-frame JSON to this path
+  --json                Print full JSON instead of text

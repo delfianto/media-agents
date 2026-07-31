@@ -1,0 +1,14 @@
+# Exit code samples (Phase 0 baseline, 2026-07-31)
+# Captured via temporary media root with .agents -> checkout symlink.
+
+analyze --bogus                     -> 2  (argparse usage)
+artwork --tmdb-id notanid           -> 2  (invalid int)
+mkvedit (no args)                   -> 2  (missing required --path)
+quality-compare (no args)           -> 2  (missing required args)
+env-check --help                    -> 0
+env-check --category nonexistent    -> 0  (category filter ignored or empty; not an error)
+track-strip stats (no cache)        -> 1  ("No cache found")
+
+# Not exercised against real media (would mutate / need credentials):
+# partial batch failure currently may exit 0 while printing errors (plan finding)
+# av1-transcode run item errors, track-strip apply errors, etc.

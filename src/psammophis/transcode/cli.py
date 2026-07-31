@@ -1,0 +1,525 @@
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+from psammophis.medialib import av1_backend, colorinfo
+from psammophis.medialib import av1_presets as presets
+from psammophis.medialib.gpu import detect_av1_nvenc_gpu
+from psammophis.medialib.grain import GRAIN_CPU_THRESHOLD, measure_grain
+from psammophis.medialib.humansize import human_size
+from psammophis.medialib.svt import detect_svt_implementation
+from psammophis.medialib.videoprobe import probe_file
+from psammophis.medialib.walk import walk_media_files
+from psammophis.runtime.roots import resolve_default_root
+
+from . import config, langfilter
+from . import run as run_mod
+
+DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".ts", ".mov"})
+
+
+def _resolve(cli_value, config_value):
+    """CLI flag wins if explicitly passed (argparse default is None for
+    these), else fall back to the resolved .env/environment config value."""
+    return cli_value if cli_value is not None else config_value
+
+
+def cmd_probe(args):
+    root = Path(args.root)
+    cfg = config.load_config(args.env_file)
+    audio_lang = _resolve(args.audio_lang, cfg.audio_lang)
+    subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
+    single_audio_track = not args.all_audio_tracks
+    svt_implementation = detect_svt_implementation()
+
+    for abs_path in walk_media_files(
+        root, DEFAULT_EXTENSIONS, path_filter=args.path, limit=args.limit
+    ):
+        rel = abs_path.relative_to(root)
+        try:
+            probed = probe_file(abs_path)
+        except Exception as exc:
+            print(f"  [ERROR] {rel}: {exc}", file=sys.stderr)
+            continue
+        video = probed.get("video")
+        if video is None:
+            print(f"  [ERROR] {rel}: no video stream found", file=sys.stderr)
+            continue
+
+        hdr = colorinfo.is_hdr(video)
+        dv = colorinfo.has_dolby_vision(video)
+        hdr10_plus = colorinfo.has_hdr10_plus(video)
+        if dv:
+            dynamic_range = "Dolby Vision"
+        elif hdr10_plus:
+            dynamic_range = "HDR10+"
+        elif hdr:
+            dynamic_range = "HDR10"
+        else:
+            dynamic_range = "SDR"
+        tier = presets.resolution_tier(video["height"])
+        preset = presets.select_preset(video["height"], args.profile, hdr)
+        size_desc = human_size(probed["format"].get("size"))
+        nvencc_ok = av1_backend.nvencc_available()
+        gpu_index = detect_av1_nvenc_gpu()
+        grain = None
+        if not args.no_grain_routing and av1_backend.grain_routing_applies(
+            "auto", video, gpu_index, nvencc_ok
+        ):
+            grain = measure_grain(abs_path, probed["format"].get("duration"))
+        try:
+            backend = av1_backend.choose_backend(
+                video,
+                "auto",
+                gpu_index,
+                nvencc_ok=nvencc_ok,
+                grain_score=grain.score if grain else None,
+                grain_threshold=args.grain_threshold,
+            )
+            engine = av1_backend.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
+        except ValueError as exc:
+            backend, engine = "?", f"error: {exc}"
+
+        kept_audio, audio_fallback = langfilter.filter_audio(
+            probed["audio"], audio_lang, single=single_audio_track
+        )
+        kept_subs = langfilter.filter_subtitles(probed["subtitles"], subtitle_lang)
+        audio_desc = (
+            ", ".join(
+                f"{a['codec_name']}/{a['channels']}ch/{a.get('language') or 'und'} -> "
+                f"opus@{presets.opus_bitrate_kbps(a['channels'])}k"
+                for a in kept_audio
+            )
+            or "(none)"
+        )
+        dropped_audio = len(probed["audio"]) - len(kept_audio)
+        dropped_subs = len(probed["subtitles"]) - len(kept_subs)
+
+        print(f"  {rel}")
+        print(
+            f"      {video['width']}x{video['height']} ({tier}) {video['codec_name']} "
+            f"{video.get('profile') or ''} {dynamic_range}  size={size_desc}"
+        )
+        print(f"      preset: {preset.name} -- {preset.description}")
+        active_crf = presets.svt_crf(preset, svt_implementation)
+        print(
+            f"      cpu encoder: {svt_implementation.label}; "
+            f"crf={active_crf if active_crf is not None else 'unavailable'}"
+        )
+        nvencc_label = "yes" if nvencc_ok else "no"
+        print(f"      auto backend: {backend} via {engine}  (nvencc={nvencc_label})")
+        if grain is not None:
+            verdict = "cpu preferred" if grain.score >= args.grain_threshold else "clean"
+            samples = ", ".join(f"{s:.4f}" for s in grain.samples)
+            print(
+                f"      grain: {grain.score:.4f} ({verdict}, threshold={args.grain_threshold:.4f}, "
+                f"samples=[{samples}])"
+            )
+        elif args.no_grain_routing and gpu_index is not None:
+            print("      grain: skipped (--no-grain-routing)")
+        audio_line = f"      audio:  {audio_desc}"
+        if audio_fallback:
+            audio_line += " (fallback: no track matched)"
+        print(audio_line)
+        if dropped_audio:
+            print(f"      audio-lang={audio_lang!r} drops {dropped_audio} track(s) not matching")
+        subtitle_line = f"      subtitles kept: {len(kept_subs)}"
+        if dropped_subs:
+            subtitle_line += f" (drops {dropped_subs} not matching subtitle-lang={subtitle_lang!r})"
+        print(subtitle_line)
+        cover = run_mod.find_sidecar_cover(abs_path)
+        print(f"      cover art: {cover if cover else '(none found)'}")
+        if dv and engine == "nvencc":
+            print("      note: Dolby Vision -- GPU path uses nvencc --dolby-vision-rpu copy")
+            print("            (profile 10.1). Pass --backend cpu for libsvtav1 -dolbyvision.")
+        elif dv and backend == "cpu":
+            print("      note: Dolby Vision -- nvencc not found; auto uses cpu/libsvtav1")
+            print("            so RPU is preserved. Install nvencc for GPU DV encodes.")
+        elif hdr10_plus and engine == "nvencc":
+            print("      note: HDR10+ -- GPU path uses nvencc --dhdr10-info copy")
+
+
+def cmd_list_presets(args):
+    del args
+    implementation = detect_svt_implementation()
+    print(f"Detected CPU encoder: {implementation.label}")
+    for (tier, profile), preset in sorted(presets.PRESETS.items()):
+        active_crf = presets.svt_crf(preset, implementation)
+        print(f"{preset.name}  [{tier} / {profile}]")
+        print(f"    {preset.description}")
+        print(
+            f"    cpu:   preset={preset.svt_preset} "
+            f"crf(mainline)={preset.crf} crf(svt-av1-hdr)={preset.svt_hdr_crf} "
+            f"active-crf={active_crf if active_crf is not None else 'unavailable'} "
+            f"tune={preset.svt_tune} "
+            f"film-grain={preset.film_grain} "
+            f"film-grain-denoise={int(preset.film_grain_denoise)} extra={preset.svt_extra}"
+        )
+        print(
+            f"    nvenc: preset={preset.nvenc_preset} tune={preset.nvenc_tune} "
+            f"cq={preset.nvenc_cq} extra={preset.nvenc_extra}"
+        )
+    print(
+        "\nHDR preserves 10-bit color and HDR metadata without changing the CRF/CQ quality target."
+    )
+    print(
+        f"Output bitrate is additionally capped to {presets.MAX_BITRATE_FRACTION_OF_SOURCE:.0%} "
+        "of each source file's own bitrate by default (--max-bitrate-fraction / --no-bitrate-cap)."
+    )
+
+
+def cmd_run(args):
+    root = Path(args.root)
+    cfg = config.load_config(args.env_file)
+
+    audio_lang = _resolve(args.audio_lang, cfg.audio_lang)
+    subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
+    output_dir_str = _resolve(args.output_dir, str(cfg.output_dir) if cfg.output_dir else None)
+    output_dir = Path(output_dir_str) if output_dir_str else None
+    if args.no_bitrate_cap:
+        max_bitrate_fraction = None
+    else:
+        max_bitrate_fraction = _resolve(args.max_bitrate_fraction, cfg.max_bitrate_fraction)
+    single_audio_track = not args.all_audio_tracks
+    cover_image_path = Path(args.cover_image) if args.cover_image else None
+    auto_cover_art = not args.no_cover_art
+
+    backup_dir = (
+        None
+        if args.no_backup or output_dir is not None
+        else (args.backup_dir or str(root / ".cache" / "transcode" / "originals"))
+    )
+    log_dir = Path(args.log_dir or str(root / ".cache" / "transcode" / "logs"))
+
+    gpu_index = None
+    if args.backend in ("auto", "nvenc"):
+        gpu_index = detect_av1_nvenc_gpu()
+        if args.backend == "nvenc" and gpu_index is None:
+            print(
+                "No AV1-capable NVIDIA GPU detected; cannot honor --backend nvenc.", file=sys.stderr
+            )
+            return 1
+
+    if args.yes and backup_dir is None and output_dir is None:
+        print(
+            "!! Running with --yes --no-backup: "
+            "originals will be permanently deleted, not backed up."
+        )
+
+    exclude_dirs = frozenset(
+        p.resolve()
+        for p in (output_dir, Path(backup_dir) if backup_dir else None, log_dir)
+        if p is not None
+    )
+
+    candidates = list(
+        walk_media_files(
+            root,
+            DEFAULT_EXTENSIONS,
+            path_filter=args.path,
+            limit=args.limit,
+            exclude_dirs=exclude_dirs,
+        )
+    )
+
+    from psammophis.runtime.events import ItemCompleted, ItemStarted, RunCompleted, RunStarted
+
+    emitter = None
+    context = getattr(args, "_context", None)
+    if context is not None and getattr(context, "emitter", None) is not None:
+        emitter = context.emitter
+        emitter.emit(
+            RunStarted,
+            root=str(root),
+            mode="applied" if args.yes else "dry-run",
+            items_total=len(candidates),
+            reporter=getattr(context, "reporter", None),
+        )
+
+    changed = planned = errors = 0
+    for index, abs_path in enumerate(candidates, start=1):
+        rel = abs_path.relative_to(root)
+        if emitter is not None:
+            emitter.emit(ItemStarted, item=str(rel), index=index, total=len(candidates))
+
+        def _print_progress(line: str, rel: Path = rel) -> None:
+            print(f"      {rel}: {line}")
+
+        result, _probed = run_mod.transcode_one(
+            abs_path,
+            root,
+            args.profile,
+            args.backend,
+            gpu_index,
+            backup_dir,
+            execute=args.yes,
+            log_dir=log_dir,
+            drop_subtitles=args.no_subtitles,
+            audio_lang=audio_lang,
+            subtitle_lang=subtitle_lang,
+            single_audio_track=single_audio_track,
+            max_bitrate_fraction=max_bitrate_fraction,
+            output_dir=output_dir,
+            cover_image_path=cover_image_path,
+            auto_cover_art=auto_cover_art,
+            overwrite_existing=args.overwrite_existing,
+            on_progress=_print_progress if args.yes else None,
+            grain_routing=not args.no_grain_routing,
+            grain_threshold=args.grain_threshold,
+        )
+        if result.status == "planned":
+            planned += 1
+            print(f"  {result.rel}")
+            print(f"      $ {result.detail}")
+            if emitter is not None:
+                emitter.emit(ItemCompleted, item=str(rel), status="skipped", detail=result.detail)
+        elif result.status == "changed":
+            changed += 1
+            print(f"  [OK] {result.rel}  ({result.detail})")
+            if emitter is not None:
+                emitter.emit(ItemCompleted, item=str(rel), status="succeeded", detail=result.detail)
+        elif result.status == "error":
+            errors += 1
+            print(f"  [ERROR] {result.rel}: {result.detail}", file=sys.stderr)
+            if emitter is not None:
+                emitter.emit(ItemCompleted, item=str(rel), status="failed", detail=result.detail)
+
+    mode = "APPLIED" if args.yes else "DRY RUN (pass --yes to execute for real)"
+    print(f"\n[{mode}] changed={changed} planned={planned} errors={errors}")
+    if args.yes and output_dir:
+        print(f"Converted files written under: {output_dir}  (originals untouched)")
+    elif args.yes and backup_dir and changed:
+        print(f"Originals of changed files were moved under: {backup_dir}")
+    if args.yes:
+        print(f"Per-file live logs under: {log_dir}  (tail -f <file> to watch progress in full)")
+    exit_code = 1 if errors else 0
+    if emitter is not None:
+        status = "succeeded" if exit_code == 0 else ("partial" if changed else "failed")
+        emitter.emit(
+            RunCompleted,
+            status=status,
+            exit_code=exit_code,
+            changed=changed,
+            planned=planned,
+            errors=errors,
+        )
+    return exit_code
+
+
+def cmd_purge_backups(args):
+    backup_dir = Path(args.backup_dir)
+    if not backup_dir.exists():
+        print(f"No backup directory at {backup_dir}, nothing to purge.")
+        return
+    size = sum(f.stat().st_size for f in backup_dir.rglob("*") if f.is_file())
+    if not args.yes:
+        print(f"Would permanently delete {backup_dir} ({human_size(size)}).")
+        print("Re-run with --yes to confirm.")
+        return
+    shutil.rmtree(backup_dir)
+    print(f"Deleted {backup_dir} ({human_size(size)} freed).")
+
+
+def _add_grain_args(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--grain-threshold",
+        type=float,
+        default=GRAIN_CPU_THRESHOLD,
+        help="Grain/noise score (1 - denoise-diff SSIM, see medialib.grain and "
+        f"reference/presets.md) at or above which --backend auto prefers cpu over nvenc "
+        f"even when a GPU is available (default: {GRAIN_CPU_THRESHOLD} -- provisional, "
+        "calibrated against only a handful of real titles so far). Only checked when a "
+        "GPU is present and Dolby Vision isn't already forcing cpu regardless.",
+    )
+    sp.add_argument(
+        "--no-grain-routing",
+        action="store_true",
+        help="Don't measure per-file grain/noise at all -- --backend auto falls back to its "
+        "pre-grain behavior (nvenc whenever a GPU is available; DV/HDR10+ rules unchanged)",
+    )
+
+
+def _add_language_args(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--audio-lang",
+        default=None,
+        help="Keep only audio tracks matching this language (ISO 639-2, e.g. 'eng'; "
+        "or 'all' to keep every track). Default: 'eng', or AV1TRANSCODE_AUDIO_LANG "
+        "from .env. Falls back to keeping every track if none match (never produces "
+        "a silent file).",
+    )
+    sp.add_argument(
+        "--subtitle-lang",
+        default=None,
+        help="Keep only subtitle tracks matching this language (or 'all' for every "
+        "track). Default: 'eng', or AV1TRANSCODE_SUBTITLE_LANG from .env.",
+    )
+
+
+def build_parser(default_root: str) -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="psammophis transcode",
+        description="AV1 (libsvtav1/av1_nvenc) + Opus transcode toolkit",
+    )
+    p.add_argument("--root", default=default_root, help="Media library root")
+    p.add_argument(
+        "--env-file",
+        default=".env",
+        help="Path to an optional .env config file (AV1TRANSCODE_* keys; see .env.example). "
+        "Real environment variables always override it; explicit CLI flags override both.",
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    sp = sub.add_parser(
+        "probe",
+        help="Read-only: report resolution/HDR/DV/audio/subtitles and which preset+backend "
+        "`run` would pick",
+    )
+    sp.add_argument(
+        "--path", help="Only consider files whose relative path contains this substring"
+    )
+    sp.add_argument("--limit", type=int, help="Stop after N files")
+    sp.add_argument(
+        "--profile",
+        choices=presets.PROFILES,
+        default=presets.DEFAULT_PROFILE,
+        help="Content profile for preset selection (default: film)",
+    )
+    _add_language_args(sp)
+    sp.add_argument(
+        "--all-audio-tracks",
+        action="store_true",
+        help="Preview keeping every matching-language audio track instead of just the single "
+        "highest-quality one",
+    )
+    _add_grain_args(sp)
+    sp.set_defaults(func=cmd_probe)
+
+    sp = sub.add_parser("list-presets", help="Print the built-in resolution x profile preset table")
+    sp.set_defaults(func=cmd_list_presets)
+
+    sp = sub.add_parser(
+        "run", help="Re-encode video to AV1 and audio to Opus (dry-run unless --yes)"
+    )
+    sp.add_argument(
+        "--path", help="Only consider files whose relative path contains this substring"
+    )
+    sp.add_argument("--limit", type=int, help="Stop after N files")
+    sp.add_argument(
+        "--profile",
+        choices=presets.PROFILES,
+        default=presets.DEFAULT_PROFILE,
+        help="Content profile for preset selection (default: film) -- pick 'anime' explicitly "
+        "for animation/cartoon sources, it is never auto-detected from audio language",
+    )
+    sp.add_argument(
+        "--backend",
+        choices=("auto", "cpu", "nvenc"),
+        default="auto",
+        help="Encoder backend (default: auto -- nvenc/GPU if an AV1-capable NVIDIA GPU is "
+        "found, else cpu/libsvtav1). Dolby Vision and HDR10+ on GPU use nvencc (rigaya "
+        "NVEnc with libdovi) so RPU/dynamic metadata is preserved; without nvencc, DV "
+        "falls back to cpu. Plain SDR/HDR10 still uses ffmpeg av1_nvenc.",
+    )
+    sp.add_argument(
+        "--yes",
+        action="store_true",
+        help="Actually execute (default is a dry run that prints the ffmpeg command it would run)",
+    )
+    sp.add_argument(
+        "--output-dir",
+        default=None,
+        help="Write converted files directly into this directory under their own filename "
+        "(flat -- not mirroring each file's path relative to --root) instead of swapping in "
+        "place. When set, the original source is never touched -- no backup/delete happens "
+        "at all. A destination filename that already exists is left alone and reported as "
+        "an error unless --overwrite-existing is passed. Default: AV1TRANSCODE_OUTPUT_DIR "
+        "from .env, or in-place if neither is set.",
+    )
+    sp.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        help="When --output-dir is set and the destination filename already exists, replace "
+        "it instead of bailing out with an error (default: refuse and leave the existing "
+        "file alone)",
+    )
+    sp.add_argument(
+        "--no-backup", action="store_true", help="Delete originals instead of backing them up"
+    )
+    sp.add_argument(
+        "--backup-dir",
+        help="Where to move originals (default: <root>/.cache/transcode/originals) -- "
+        "ignored when --output-dir is set",
+    )
+    sp.add_argument(
+        "--log-dir",
+        help="Where to write per-file ffmpeg logs (default: <root>/.cache/transcode/logs)",
+    )
+    sp.add_argument(
+        "--no-subtitles",
+        action="store_true",
+        help="Drop subtitle/attachment streams instead of copying them (use if the source "
+        "container's subtitle codec can't mux into Matroska)",
+    )
+    _add_language_args(sp)
+    sp.add_argument(
+        "--all-audio-tracks",
+        action="store_true",
+        help="Keep and transcode every audio track matching --audio-lang instead of just the "
+        "single highest-quality one (default: pick one -- e.g. a TrueHD Atmos track over a "
+        "same-language E-AC3 'compatibility' copy of the same mix, a real pattern in remuxes "
+        "with more than one delivery of the same audio)",
+    )
+    sp.add_argument(
+        "--max-bitrate-fraction",
+        type=float,
+        default=None,
+        help=f"Cap output video bitrate to this fraction of the source's own bitrate "
+        f"(default: {presets.MAX_BITRATE_FRACTION_OF_SOURCE}, or "
+        "AV1TRANSCODE_MAX_BITRATE_FRACTION from .env) -- the safety net against producing "
+        "a file larger than the source on already-efficiently-encoded input.",
+    )
+    sp.add_argument(
+        "--no-bitrate-cap",
+        action="store_true",
+        help="Disable the source-relative bitrate ceiling entirely (pure CRF/CQ, no maximum)",
+    )
+    _add_grain_args(sp)
+    sp.add_argument(
+        "--cover-image",
+        default=None,
+        help="Embed this image as Matroska cover art (a proper attachment, not a video stream) "
+        "instead of auto-detecting one",
+    )
+    sp.add_argument(
+        "--no-cover-art",
+        action="store_true",
+        help="Don't look for or embed a poster.jpg/cover.jpg/folder.jpg sitting next to the "
+        "source (default: auto-embed one if found, e.g. one artwork already fetched)",
+    )
+    sp.set_defaults(func=cmd_run)
+
+    sp = sub.add_parser(
+        "purge-backups", help="Permanently delete the backup directory of originals"
+    )
+    sp.add_argument("--backup-dir", default=None)
+    sp.add_argument("--yes", action="store_true")
+    sp.set_defaults(func=cmd_purge_backups)
+
+    return p
+
+
+def main(argv=None, context=None) -> int:
+    default_root = str(resolve_default_root(feature_env="AV1TRANSCODE_ROOT").path)
+    parser = build_parser(default_root)
+    args = parser.parse_args(argv)
+    if args.command == "purge-backups" and args.backup_dir is None:
+        args.backup_dir = str(Path(args.root) / ".cache" / "transcode" / "originals")
+    args._context = context
+    result = args.func(args)
+    return 0 if result is None else int(result)
+
+
+if __name__ == "__main__":
+    main()

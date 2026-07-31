@@ -1,0 +1,21 @@
+usage: trackstrip transcode [-h] [--from-codec FROM_CODEC]
+                            [--to-codec TO_CODEC] [--bitrate BITRATE]
+                            [--path PATH] [--limit LIMIT] [--yes]
+                            [--no-backup] [--backup-dir BACKUP_DIR]
+
+options:
+  -h, --help            show this help message and exit
+  --from-codec FROM_CODEC
+                        Comma-separated ffprobe codec_name(s) to transcode
+                        away from (default: dts)
+  --to-codec TO_CODEC   Target audio codec (default: eac3)
+  --bitrate BITRATE     Target audio bitrate (default: 640k)
+  --path PATH           Only consider files whose relative path contains this
+                        substring
+  --limit LIMIT         Stop after N files
+  --yes                 Actually execute the transcode (default is a live dry
+                        run)
+  --no-backup           Delete originals instead of backing them up
+  --backup-dir BACKUP_DIR
+                        Where to move originals (default:
+                        <root>/.cache/trackstrip/originals)

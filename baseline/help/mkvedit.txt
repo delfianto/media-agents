@@ -1,0 +1,40 @@
+usage: mkvedit [-h] --path PATH [--filter FILTER] [--limit LIMIT]
+               [--title TITLE | --delete-title] [--track TRACK]
+               [--track-name TRACK_NAME | --delete-track-name]
+               [--language LANGUAGE] [--flag FLAG]
+               [--default-track DEFAULT_TRACK] [--default-audio DEFAULT_AUDIO]
+               [--default-subtitle DEFAULT_SUBTITLE]
+               [--default-video DEFAULT_VIDEO] [--cover COVER |
+               --delete-cover] [--attachment-name ATTACHMENT_NAME]
+               [--attachment-mime-type ATTACHMENT_MIME_TYPE] [--tags TAGS |
+               --delete-tags] [--chapters CHAPTERS | --delete-chapters]
+               [--backup-suffix BACKUP_SUFFIX] [--yes]
+
+Safely edit Matroska metadata without remuxing
+
+options:
+  -h, --help            show this help message and exit
+  --path PATH           An MKV file or directory
+  --filter FILTER       Only relative paths containing this substring
+  --limit LIMIT
+  --title TITLE
+  --delete-title
+  --track TRACK
+  --track-name TRACK_NAME
+  --delete-track-name
+  --language LANGUAGE
+  --flag FLAG
+  --default-track DEFAULT_TRACK
+  --default-audio DEFAULT_AUDIO
+  --default-subtitle DEFAULT_SUBTITLE
+  --default-video DEFAULT_VIDEO
+  --cover COVER
+  --delete-cover
+  --attachment-name ATTACHMENT_NAME
+  --attachment-mime-type ATTACHMENT_MIME_TYPE
+  --tags TAGS
+  --delete-tags
+  --chapters CHAPTERS
+  --delete-chapters
+  --backup-suffix BACKUP_SUFFIX
+  --yes

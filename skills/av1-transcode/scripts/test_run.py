@@ -64,6 +64,32 @@ def test_verify_output_rejects_copied_video_statistics(monkeypatch, tmp_path):
     assert "stale source statistics" in detail
 
 
+def test_verify_output_accepts_recalculated_equal_frame_count(monkeypatch, tmp_path):
+    orig = _probed(
+        _video(
+            statistics_tags={
+                "BPS-eng": "57537352",
+                "NUMBER_OF_FRAMES-eng": "102938",
+                "NUMBER_OF_BYTES-eng": "30878657322",
+            }
+        )
+    )
+    _patch_new_probed(
+        monkeypatch,
+        _video(
+            statistics_tags={
+                "BPS": "22000000",
+                "NUMBER_OF_FRAMES": "102938",
+                "NUMBER_OF_BYTES": "11700000000",
+            }
+        ),
+        size=12_000_000_000,
+    )
+    ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv")
+    assert ok
+    assert "smaller" in detail
+
+
 def test_verify_output_rejects_missing_measured_statistics(monkeypatch, tmp_path):
     orig = _probed(_video())
     new_probed = _probed(_video(statistics_tags={}), size=22_000_000_000)

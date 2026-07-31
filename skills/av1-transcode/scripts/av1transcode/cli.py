@@ -10,6 +10,7 @@ from medialib.gpu import detect_av1_nvenc_gpu
 from medialib.grain import GRAIN_CPU_THRESHOLD, measure_grain
 from medialib.humansize import human_size
 from medialib.libroot import find_library_root, find_own_script_path
+from medialib.svt import detect_svt_implementation
 from medialib.videoprobe import probe_file
 from medialib.walk import walk_media_files
 
@@ -31,6 +32,7 @@ def cmd_probe(args):
     audio_lang = _resolve(args.audio_lang, cfg.audio_lang)
     subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
     single_audio_track = not args.all_audio_tracks
+    svt_implementation = detect_svt_implementation()
 
     for abs_path in walk_media_files(
         root, DEFAULT_EXTENSIONS, path_filter=args.path, limit=args.limit
@@ -101,6 +103,11 @@ def cmd_probe(args):
             f"{video.get('profile') or ''} {dynamic_range}  size={size_desc}"
         )
         print(f"      preset: {preset.name} -- {preset.description}")
+        active_crf = presets.svt_crf(preset, svt_implementation)
+        print(
+            f"      cpu encoder: {svt_implementation.label}; "
+            f"crf={active_crf if active_crf is not None else 'unavailable'}"
+        )
         nvencc_label = "yes" if nvencc_ok else "no"
         print(f"      auto backend: {backend} via {engine}  (nvencc={nvencc_label})")
         if grain is not None:
@@ -136,11 +143,17 @@ def cmd_probe(args):
 
 def cmd_list_presets(args):
     del args
+    implementation = detect_svt_implementation()
+    print(f"Detected CPU encoder: {implementation.label}")
     for (tier, profile), preset in sorted(presets.PRESETS.items()):
+        active_crf = presets.svt_crf(preset, implementation)
         print(f"{preset.name}  [{tier} / {profile}]")
         print(f"    {preset.description}")
         print(
-            f"    cpu:   preset={preset.svt_preset} crf={preset.crf} tune={preset.svt_tune} "
+            f"    cpu:   preset={preset.svt_preset} "
+            f"crf(mainline)={preset.crf} crf(svt-av1-hdr)={preset.svt_hdr_crf} "
+            f"active-crf={active_crf if active_crf is not None else 'unavailable'} "
+            f"tune={preset.svt_tune} "
             f"film-grain={preset.film_grain} "
             f"film-grain-denoise={int(preset.film_grain_denoise)} extra={preset.svt_extra}"
         )

@@ -35,7 +35,7 @@ Prints one line per check, grouped by which skill needs it, `OK` (found) / `!!` 
 | `shared` | `ffmpeg`, `ffprobe` | Yes -- both `track-strip` and `av1-transcode` shell out to these directly. |
 | `track-strip` | `mkvmerge` | Yes -- `apply`/`transcode`'s track-selection backend has no fallback. |
 | `mkvedit` | `mkvmerge`, `mkvpropedit` | Yes -- inspection and in-place editing have no fallback. |
-| `av1-transcode` | ffmpeg's `libsvtav1` and `av1_nvenc` encoders, an AV1-capable NVIDIA GPU, `nvencc`, `dovi_tool`, `hdr10plus_tool` | `libsvtav1`: yes (the only backend that can re-inject Dolby Vision RPU, and the CPU fallback path). Everything else: no -- GPU/`nvencc`/`dovi_tool`/`hdr10plus_tool` are all optional speed/metadata conveniences with a documented fallback (see `av1-transcode/reference/incidents.md`). |
+| `av1-transcode` | ffmpeg's `libsvtav1` and `av1_nvenc` encoders, the linked SVT implementation/version, an AV1-capable NVIDIA GPU, `nvencc`, `dovi_tool`, `hdr10plus_tool` | `libsvtav1` and an identifiable linked implementation: yes (the CPU fallback must select the matching upstream or `svt-av1-hdr` CRF table). Everything else: no -- GPU/`nvencc`/`dovi_tool`/`hdr10plus_tool` are optional speed/metadata conveniences with a documented fallback. |
 | `organize` | `guessit`, `ORGANIZE_TMDB_API_KEY` or `TMDB_API_KEY` | Yes. |
 | `artwork` | `ARTWORK_TMDB_API_KEY` or `TMDB_API_KEY` | Yes. |
 | `subtitle` | `SUBTITLE_OPENSUBTITLES_API_KEY` | Optional until a fetch is requested. |

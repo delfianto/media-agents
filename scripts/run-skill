@@ -7,7 +7,8 @@ usage() {
 usage: run-skill <skill> [arguments...]
 
 skills:
-  analyze  artwork  av1-transcode  env-check  mkvedit  organize  subtitle  track-strip
+  analyze  artwork  av1-transcode  env-check  mkvedit  organize  quality-compare
+  subtitle  track-strip
 EOF
 }
 
@@ -26,6 +27,7 @@ case "$skill" in
     env-check) module=envcheck ;;
     mkvedit) module=mkvedit ;;
     organize) module=organize ;;
+    quality-compare) module=qualitycompare ;;
     subtitle) module=subtitle ;;
     track-strip) module=trackstrip ;;
     *)

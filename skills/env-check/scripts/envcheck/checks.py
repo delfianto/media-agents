@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from medialib.gpu import detect_av1_nvenc_gpu, list_gpu_indices
+from medialib.svt import detect_svt_implementation
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,31 @@ def check_ffmpeg_encoder(encoder: str, *, required: bool, install_hint: str) -> 
     found = bool(proc and proc.returncode == 0 and "Encoder" in (proc.stdout or ""))
     return CheckResult(
         name, "av1-transcode", required, found, install_hint="" if found else install_hint
+    )
+
+
+def check_svt_implementation() -> CheckResult:
+    implementation = detect_svt_implementation()
+    found = implementation.flavor != "unknown"
+    detail = implementation.label
+    if implementation.library:
+        detail += f" ({implementation.library})"
+    if implementation.error:
+        detail += f": {implementation.error}"
+    return CheckResult(
+        "SVT-AV1 implementation",
+        "av1-transcode",
+        True,
+        found,
+        detail=detail,
+        install_hint=(
+            ""
+            if found
+            else (
+                "libSvtAv1Enc could not be identified; reinstall SVT-AV1 or "
+                "svt-av1-hdr so av1-transcode can select the matching CRF table"
+            )
+        ),
     )
 
 
@@ -278,6 +304,7 @@ def all_checks() -> list[CheckResult]:
                 "can re-inject Dolby Vision RPU)"
             ),
         ),
+        check_svt_implementation(),
         check_ffmpeg_encoder(
             "av1_nvenc",
             required=False,

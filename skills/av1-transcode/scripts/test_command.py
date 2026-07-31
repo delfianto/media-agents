@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import pytest
 from av1transcode import command
 from medialib import av1_presets as presets
+from medialib.svt import SvtImplementation
+
+_MAINLINE = SvtImplementation("mainline", "v4.1.0", "test")
+_HDR_FORK = SvtImplementation("svt-av1-hdr", "v4.1.0", "test")
 
 
 def _probed(*, video_bit_rate=None, audio=None, subtitles=None, attachment_count=0):
@@ -75,6 +80,62 @@ def test_cpu_film_grain_explicitly_enables_denoising():
     assert "film-grain=10" in params
     assert "film-grain-denoise=1" in params
     assert "scd=" not in params
+
+
+def test_svt_hdr_fork_uses_separate_crf_and_pinned_pq_parameters():
+    probed = _probed(audio=[_audio(1, "eng")])
+    probed["video"]["color_transfer"] = "smpte2084"
+    cmd = command.build_command(
+        "in.mkv",
+        "out.mkv",
+        probed,
+        _preset(),
+        "cpu",
+        svt_implementation=_HDR_FORK,
+    )
+    params = cmd[cmd.index("-svtav1-params") + 1]
+    assert cmd[cmd.index("-crf") + 1] == "31"
+    for expected in (
+        "sharp-tx=1",
+        "tf-strength=1",
+        "kf-tf-strength=1",
+        "qp-scale-compress-strength=1",
+        "ac-bias=1",
+        "noise-norm-strength=1",
+        "adaptive-film-grain=1",
+        "noise-adaptive-filtering=2",
+        "variance-boost-curve=3",
+    ):
+        assert expected in params
+
+
+def test_mainline_does_not_receive_fork_only_parameters():
+    probed = _probed(audio=[_audio(1, "eng")])
+    cmd = command.build_command(
+        "in.mkv",
+        "out.mkv",
+        probed,
+        _preset(),
+        "cpu",
+        svt_implementation=_MAINLINE,
+    )
+    params = cmd[cmd.index("-svtav1-params") + 1]
+    assert cmd[cmd.index("-crf") + 1] == "24"
+    assert "adaptive-film-grain" not in params
+
+
+def test_unknown_svt_implementation_refuses_cpu_encode():
+    probed = _probed(audio=[_audio(1, "eng")])
+    unknown = SvtImplementation("unknown", None, None, "not found")
+    with pytest.raises(ValueError, match="different CRF scales"):
+        command.build_command(
+            "in.mkv",
+            "out.mkv",
+            probed,
+            _preset(),
+            "cpu",
+            svt_implementation=unknown,
+        )
 
 
 def test_audio_language_filter_maps_matching_tracks_when_single_is_disabled():

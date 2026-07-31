@@ -17,6 +17,7 @@ from typing import IO
 from medialib import av1_backend, colorinfo
 from medialib import av1_presets as presets
 from medialib.grain import GrainMeasurement, measure_grain
+from medialib.svt import SvtImplementation, detect_svt_implementation
 from medialib.videoprobe import probe_file
 
 from . import command as command_mod
@@ -350,6 +351,7 @@ def build_encode_command(
     single_audio_track: bool,
     max_bitrate_fraction: float | None,
     cover_image_path: Path | None,
+    svt_implementation: SvtImplementation | None = None,
 ) -> list[str]:
     """Dispatch to ffmpeg (command.py) or nvencc (nvencc_cmd.py).
 
@@ -384,6 +386,7 @@ def build_encode_command(
         single_audio_track=single_audio_track,
         max_bitrate_fraction=max_bitrate_fraction,
         cover_image_path=cover_image_path,
+        svt_implementation=svt_implementation,
     )
 
 
@@ -456,6 +459,7 @@ def transcode_one(
 
     hdr = colorinfo.is_hdr(video)
     preset = presets.select_preset(video["height"], profile, hdr)
+    svt_implementation = detect_svt_implementation() if backend == "cpu" else None
     final_path = (
         (output_dir / abs_path.name).with_suffix(".mkv")
         if output_dir
@@ -488,8 +492,11 @@ def transcode_one(
             single_audio_track=single_audio_track,
             max_bitrate_fraction=max_bitrate_fraction,
             cover_image_path=resolved_cover if engine == "ffmpeg" else None,
+            svt_implementation=svt_implementation,
         )
         detail = " ".join(str(c) for c in cmd)
+        if svt_implementation is not None:
+            detail = f"[svt={svt_implementation.label}] {detail}"
         if engine == "nvencc" and resolved_cover is not None:
             detail += f" && ffmpeg-cover-attach {resolved_cover}"
         if grain is not None:
@@ -534,6 +541,7 @@ def transcode_one(
             single_audio_track=single_audio_track,
             max_bitrate_fraction=max_bitrate_fraction,
             cover_image_path=resolved_cover if engine == "ffmpeg" else None,
+            svt_implementation=svt_implementation,
         )
         returncode, tail = stream_process(
             cmd, log_path, probed["format"].get("duration"), on_progress=on_progress
@@ -587,6 +595,8 @@ def transcode_one(
 
         shutil.move(str(tmp_path), str(final_path))
         label = f"{engine}/{backend}/{preset.name}"
+        if svt_implementation is not None:
+            label += f"/{svt_implementation.label}/crf{presets.svt_crf(preset, svt_implementation)}"
         if grain is not None:
             label += f" (grain={grain.score:.4f})"
         return TranscodeResult(str(rel), "changed", f"{label}: {detail}"), probed

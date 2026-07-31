@@ -1,0 +1,15 @@
+usage: artwork [-h] [--env-file ENV_FILE] --path PATH
+               [--type {all,poster,fanart,still,nfo}] [--tmdb-id TMDB_ID]
+               [--filter FILTER] [--limit LIMIT] [--yes]
+
+Fetch artwork and NFO metadata
+
+options:
+  -h, --help            show this help message and exit
+  --env-file ENV_FILE
+  --path PATH           An organized video file or directory
+  --type {all,poster,fanart,still,nfo}
+  --tmdb-id TMDB_ID     Override a missing provider tag for one file
+  --filter FILTER       Only relative paths containing this substring
+  --limit LIMIT
+  --yes

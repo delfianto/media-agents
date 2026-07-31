@@ -1,0 +1,37 @@
+usage: av1transcode probe [-h] [--path PATH] [--limit LIMIT]
+                          [--profile {film,anime}] [--audio-lang AUDIO_LANG]
+                          [--subtitle-lang SUBTITLE_LANG] [--all-audio-tracks]
+                          [--grain-threshold GRAIN_THRESHOLD]
+                          [--no-grain-routing]
+
+options:
+  -h, --help            show this help message and exit
+  --path PATH           Only consider files whose relative path contains this
+                        substring
+  --limit LIMIT         Stop after N files
+  --profile {film,anime}
+                        Content profile for preset selection (default: film)
+  --audio-lang AUDIO_LANG
+                        Keep only audio tracks matching this language (ISO
+                        639-2, e.g. 'eng'; or 'all' to keep every track).
+                        Default: 'eng', or AV1TRANSCODE_AUDIO_LANG from .env.
+                        Falls back to keeping every track if none match (never
+                        produces a silent file).
+  --subtitle-lang SUBTITLE_LANG
+                        Keep only subtitle tracks matching this language (or
+                        'all' for every track). Default: 'eng', or
+                        AV1TRANSCODE_SUBTITLE_LANG from .env.
+  --all-audio-tracks    Preview keeping every matching-language audio track
+                        instead of just the single highest-quality one
+  --grain-threshold GRAIN_THRESHOLD
+                        Grain/noise score (1 - denoise-diff SSIM, see
+                        medialib.grain and reference/presets.md) at or above
+                        which --backend auto prefers cpu over nvenc even when
+                        a GPU is available (default: 0.012 -- provisional,
+                        calibrated against only a handful of real titles so
+                        far). Only checked when a GPU is present and Dolby
+                        Vision isn't already forcing cpu regardless.
+  --no-grain-routing    Don't measure per-file grain/noise at all -- --backend
+                        auto falls back to its pre-grain behavior (nvenc
+                        whenever a GPU is available; DV/HDR10+ rules
+                        unchanged)

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quality Compare"
+  short_description: "Deep video and image quality analysis"
+  default_prompt: "Use $compare to deeply compare this encoded video or compressed image against its original source."

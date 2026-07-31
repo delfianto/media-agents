@@ -1,0 +1,15 @@
+usage: subtitle [-h] [--env-file ENV_FILE] --path PATH [--language LANGUAGE]
+                [--filter FILTER] [--limit LIMIT] [--overwrite] [--yes]
+
+Fetch external subtitles
+
+options:
+  -h, --help           show this help message and exit
+  --env-file ENV_FILE
+  --path PATH          An organized video file or directory
+  --language LANGUAGE  OpenSubtitles language code; repeatable (defaults to
+                       SUBTITLE_LANGUAGES)
+  --filter FILTER      Only relative paths containing this substring
+  --limit LIMIT
+  --overwrite
+  --yes

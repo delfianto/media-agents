@@ -1,0 +1,41 @@
+[39m--------------------------------------------------------------------------------
+/tmp/psammo-nvencc.mkv
+--------------------------------------------------------------------------------
+[39m[39mNVEnc (x64) 9.27 (r3981) by rigaya, Jul 29 2026 17:56:43 (gcc 15.3.0/Linux)
+OS Version     CachyOS (7.1.5-1-cachyos)
+CPU            AMD Ryzen 9 9950X 16-Core Processor (16C/32T)
+GPU            #0: NVIDIA GeForce RTX 4080 (9728 cores, 2535 MHz)[PCIe4x16][610.43]
+NVENC / CUDA   NVENC API 13.0, CUDA 13.3, schedule mode: auto
+Input Buffers  CUDA, 22 frames
+Input Info     avsw: h264(yuv444)->nv12 [AVX2], 320x240, 24/1 fps
+Vpp Filters    copyDtoD
+Output Info    AV1 main @ Level auto
+               320x240p 1:1 24.000fps (24/1fps)
+               avwriter: av1 => matroska
+Encoder Preset performance
+Rate Control   VBR
+Multipass      none
+Bitrate        0 kbps (Max: 1000 kbps)
+Target Quality 25.00
+QP range       I:0-255  P:0-255  B:0-255
+QP Offset      cb:0  cr:0
+VBV buf size   auto
+Split Enc Mode auto
+Tuning Info    hq
+Lookahead      off
+GOP length     240 frames
+B frames       5 frames [ref mode: middle]
+Ref frames     5 frames, MultiRef L0:auto L1:auto
+AQ             off
+Part size      max auto / min auto
+Tile num       columns auto / rows auto
+TemporalLayers max 1
+Refs           forward auto, backward auto
+Others         mv:auto 
+[39m[39m                                                                               
+[39m[39mencoded 48 frames, 170.21 fps, 95.33 kbps, 0.02 MB
+[39m[39mencode time 0:00:00, CPULoad: 0.0%
+[39m[39mframe type IDR  1
+[39m[39mframe type I    1,  avgQP  34.00,  total size  0.00 MB
+[39m[39mframe type P   47,  avgQP  27.17,  total size  0.02 MB
+[39m

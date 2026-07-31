@@ -18,8 +18,8 @@ low-confidence matches untouched for manual review.
 5. Run `artwork` and `subtitle` against the organized library afterward.
 
 ```bash
-.agents/scripts/run-skill organize --env-file .env --inbox /path/to/inbox
-.agents/scripts/run-skill organize --env-file .env --path "Movie.Name" --copy --yes
+.agents/run.sh organize --env-file .env --inbox /path/to/inbox
+.agents/run.sh organize --env-file .env --path "Movie.Name" --copy --yes
 ```
 
 Configuration uses `ORGANIZE_TMDB_API_KEY` with shared `TMDB_API_KEY` fallback, plus

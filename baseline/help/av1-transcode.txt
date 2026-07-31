@@ -1,0 +1,20 @@
+usage: av1transcode [-h] [--root ROOT] [--env-file ENV_FILE]
+                    {probe,list-presets,run,purge-backups} ...
+
+AV1 (libsvtav1/av1_nvenc) + Opus transcode toolkit
+
+positional arguments:
+  {probe,list-presets,run,purge-backups}
+    probe               Read-only: report resolution/HDR/DV/audio/subtitles
+                        and which preset+backend `run` would pick
+    list-presets        Print the built-in resolution x profile preset table
+    run                 Re-encode video to AV1 and audio to Opus (dry-run
+                        unless --yes)
+    purge-backups       Permanently delete the backup directory of originals
+
+options:
+  -h, --help            show this help message and exit
+  --root ROOT           Media library root
+  --env-file ENV_FILE   Path to an optional .env config file (AV1TRANSCODE_*
+                        keys; see .env.example). Real environment variables
+                        always override it; explicit CLI flags override both.

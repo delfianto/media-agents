@@ -10,9 +10,9 @@ metadata:
 
 # track-strip
 
-This Plex library (`Movies/` and `TV Shows/`) is inspected and maintained by a zero-dependency Python toolkit at `scripts/trackstrip/` (next to this file). It wraps `ffprobe`, `ffmpeg`, and `mkvmerge`. Track selection (`apply`) never re-encodes - it only remuxes (stream-copies) files to add/remove tracks. `transcode` is the one exception: it re-encodes only the audio streams that need it (video is always stream-copied), used when a codec itself is the problem (e.g. DTS not decoding over eARC on some LG TVs) rather than the track's language.
+This Plex library (`Movies/` and `TV Shows/`) is inspected and maintained by a zero-dependency Python toolkit at `src/psammophis/trackstrip/` (next to this file). It wraps `ffprobe`, `ffmpeg`, and `mkvmerge`. Track selection (`apply`) never re-encodes - it only remuxes (stream-copies) files to add/remove tracks. `transcode` is the one exception: it re-encodes only the audio streams that need it (video is always stream-copied), used when a codec itself is the problem (e.g. DTS not decoding over eARC on some LG TVs) rather than the track's language.
 
-See `reference/incidents.md` for the full incident history (real bugs found auditing this exact library, and the fixes) behind every safety rule below - read it before changing verification/fallback logic in `scripts/trackstrip/`, since several of these were subtle enough to ship once already.
+See `reference/incidents.md` for the full incident history (real bugs found auditing this exact library, and the fixes) behind every safety rule below - read it before changing verification/fallback logic in `src/psammophis/trackstrip/`, since several of these were subtle enough to ship once already.
 
 Only files inside `Movies/`/`TV Shows/` subdirectories are ever touched - anything sitting loose directly at the library root (e.g. a freshly added file not yet sorted) is invisible to every subcommand by design.
 
@@ -21,50 +21,50 @@ Only files inside `Movies/`/`TV Shows/` subdirectories are ever touched - anythi
 Run from the media-library root through the shared `.envrc`-aware uv launcher:
 
 ```bash
-.agents/scripts/run-skill track-strip <subcommand> [options]
+.agents/run.sh track-strip <subcommand> [options]
 ```
 
 Subcommands, in the order you'd normally use them:
 
 1. **`scan`** - Probe every media file with `ffprobe` and update the JSON cache at `<library-root>/.cache/trackstrip/scan.json`. Read-only. Incremental (skips files whose size+mtime match the cache) unless `--force` is passed.
    ```bash
-   .agents/scripts/run-skill track-strip scan --jobs 8
+   .agents/run.sh track-strip scan --jobs 8
    ```
 
 2. **`stats`** - Print codec and language statistics from the cache: video codec/profile/resolution breakdown, audio codec + lossless/lossy split, subtitle codec breakdown, per-language track counts, how many files have non-English audio/subtitles, and an estimate of what the default policy would strip. Read-only; requires `scan` to have run at least once.
    ```bash
-   .agents/scripts/run-skill track-strip stats
+   .agents/run.sh track-strip stats
    ```
 
 3. **`plan`** - Fast, cache-based preview of exactly which tracks `apply` would drop per file, with reasons. Read-only.
    ```bash
-   .agents/scripts/run-skill track-strip plan [--path "substring"] [--limit N]
+   .agents/run.sh track-strip plan [--path "substring"] [--limit N]
    ```
 
 4. **`apply`** - Remux files to drop non-English audio/subtitle tracks (plus whatever other policy flags are set - see the table below). **Defaults to a live, authoritative dry run** (re-probes each file fresh and prints the exact `mkvmerge`/`ffmpeg` command it would run, touching nothing). Pass `--yes` to actually execute.
    ```bash
    # authoritative dry run (safe, default)
-   .agents/scripts/run-skill track-strip apply --path "Some Show"
+   .agents/run.sh track-strip apply --path "Some Show"
 
    # execute for real, for one show first
-   .agents/scripts/run-skill track-strip apply --path "Some Show" --yes
+   .agents/run.sh track-strip apply --path "Some Show" --yes
 
    # execute for the whole library
-   .agents/scripts/run-skill track-strip apply --yes
+   .agents/run.sh track-strip apply --yes
    ```
 
 5. **`transcode`** - Re-encode audio tracks of a given codec to a more compatible one; video and every other track are always stream-copied untouched. For codec-level playback problems rather than language ones - e.g. DTS/DTS-HD MA is muted on some LG TVs over eARC (confirmed on this library: LG has full Dolby licensing for AC-3/E-AC-3/TrueHD/Atmos, but doesn't license DTS decode in most webOS firmware). Same dry-run-by-default and verify-then-swap safety model as `apply`.
    ```bash
-   .agents/scripts/run-skill track-strip transcode --path "Some Show"                    # dry run
-   .agents/scripts/run-skill track-strip transcode --path "Some Show" --yes --no-backup  # execute
+   .agents/run.sh track-strip transcode --path "Some Show"                    # dry run
+   .agents/run.sh track-strip transcode --path "Some Show" --yes --no-backup  # execute
    # defaults: --from-codec dts --to-codec eac3 --bitrate 640k
    ```
    Also use `--drop-audio-codec CODEC` on `plan`/`apply` for files where the problem codec has a working fallback already present (e.g. DTS-HD MA alongside a TrueHD or AC3 track) - a plain track drop rather than a transcode, since no compatible audio would be lost. The safety net doubles as protection here: run `apply --drop-audio-codec dts` library-wide and it will only ever affect files that have another *usable* audio track to fall back to - files where the flagged codec is the only real audio come back `unchanged` automatically, no need to `--path`-filter them out by hand. "Usable" specifically excludes commentary tracks (see the Prometheus incident in `reference/incidents.md` - a real data-loss case this guards against now).
 
 6. **`purge-backups`** - Once you've confirmed the remuxed files play fine, permanently delete the backed-up originals to reclaim disk space.
    ```bash
-   .agents/scripts/run-skill track-strip purge-backups         # shows size, asks for --yes
-   .agents/scripts/run-skill track-strip purge-backups --yes    # actually deletes
+   .agents/run.sh track-strip purge-backups         # shows size, asks for --yes
+   .agents/run.sh track-strip purge-backups --yes    # actually deletes
    ```
 
 ## Path resolution
@@ -124,6 +124,29 @@ Detects SDH ("Subtitles for the Deaf and Hard-of-hearing" - adds speaker labels 
 
 ## Extending
 
-The package under `scripts/trackstrip/` is small and modular: `langs.py` (language code table), `scan.py` (ffprobe walk+cache), `track_policy.py` (the single keep/drop decision function, shared by both strip backends and by `stats`), `remux_mkv.py` (mkvmerge backend for track selection), `remux_ffmpeg.py` (ffmpeg backend for mp4/other containers), `transcode.py` (ffmpeg audio re-encode, the one place that isn't pure stream copy), `apply.py` (shared orchestration used by both `apply` and `transcode`: temp file, verify, backup, swap - see `_execute_backend_plan`), `cli.py` (argparse subcommands). Add new subcommands in `cli.py`. `test_track_policy.py` covers the policy logic - run it (see `AGENTS.md` at the repo root for the lint/type-check/test commands) after touching `track_policy.py`.
+The package under `src/psammophis/trackstrip/` is small and modular: `langs.py` (language code table), `scan.py` (ffprobe walk+cache), `track_policy.py` (the single keep/drop decision function, shared by both strip backends and by `stats`), `remux_mkv.py` (mkvmerge backend for track selection), `remux_ffmpeg.py` (ffmpeg backend for mp4/other containers), `transcode.py` (ffmpeg audio re-encode, the one place that isn't pure stream copy), `apply.py` (shared orchestration used by both `apply` and `transcode`: temp file, verify, backup, swap - see `_execute_backend_plan`), `cli.py` (argparse subcommands). Add new subcommands in `cli.py`. `test_track_policy.py` covers the policy logic - run it (see `AGENTS.md` at the repo root for the lint/type-check/test commands) after touching `track_policy.py`.
 
 When adding a new backend, note that `track_policy.from_mkvmerge_track()` normalizes mkvmerge's audio `codec` field (a free-text description like "DTS-HD Master Audio" that varies with profile) through its stable `codec_id` (e.g. `A_DTS`) into the same short name ffprobe uses (`dts`) - extend `_MKVMERGE_AUDIO_CODEC_ID_MAP` there if you add logic that compares `codec_name` for a codec not already in that table, or codec-based matching will silently no-op on `.mkv` files (this exact bug shipped once already - see `reference/incidents.md`).
+
+## Progress for long-running applied work
+
+For multi-hour encodes or large batch mutations, prefer JSONL progress so the
+session can be observed without ANSI noise:
+
+```bash
+.agents/run.sh --reporter jsonl --progress-interval 30 transcode run ... --yes
+```
+
+- Continue observing the **same** process/session; do not relaunch an encode
+  merely because an interval produced no output (heartbeats and journals exist
+  for this).
+- Accept success only when both `run.completed.status` and the process exit code
+  indicate success. Encoder percent reaching 100% is **not** success — verification
+  and commit still follow.
+- Inspect durable status without the original terminal:
+
+```bash
+.agents/run.sh runs list --active --json
+.agents/run.sh runs show <run-id> --json
+.agents/run.sh runs events <run-id> --after <seq>
+```

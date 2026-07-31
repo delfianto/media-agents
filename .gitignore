@@ -6,7 +6,6 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 *.egg-info/
-uv.lock
 
 # Secrets and environment keys
 .env
@@ -14,3 +13,4 @@ uv.lock
 # Direnv (machine specific)
 .envrc
 .direnv
+dist/

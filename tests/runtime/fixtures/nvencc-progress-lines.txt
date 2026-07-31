@@ -1,0 +1,1 @@
+[100.0%] 482 frames: 480.56 fps, 144 kbps, remain 0:00:00, GPU 18%, VE 0%, est out size 0.3MB

@@ -1,0 +1,350 @@
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+from psammophis.runtime.roots import resolve_default_root
+
+from . import apply as apply_mod
+from . import langs, track_policy
+from . import scan as scan_mod
+from . import stats as stats_mod
+
+
+def _policy_from_args(args):
+    drop_codecs = frozenset(
+        c.strip().lower() for c in (args.drop_audio_codec or "").split(",") if c.strip()
+    )
+    return track_policy.Policy(
+        keep_unknown=not args.strip_unknown,
+        keep_forced_subs=not args.strip_forced,
+        strip_commentary=args.strip_commentary,
+        detect_anime=not args.no_detect_anime,
+        drop_audio_codecs=drop_codecs,
+        single_audio_track=args.single_audio_track,
+        drop_sdh_subs=args.drop_sdh,
+    )
+
+
+def add_policy_args(p):
+    p.add_argument(
+        "--strip-unknown",
+        action="store_true",
+        help="Also strip audio/subtitle tracks tagged und/unknown language (default: kept)",
+    )
+    p.add_argument(
+        "--strip-forced",
+        action="store_true",
+        help="Also strip non-English forced subtitles (default: forced subs always kept)",
+    )
+    p.add_argument(
+        "--strip-commentary",
+        action="store_true",
+        help="Also strip English commentary audio tracks (default: kept)",
+    )
+    p.add_argument(
+        "--no-detect-anime",
+        action="store_true",
+        help="Disable anime handling (Japanese-original releases: <=2 audio tracks "
+        "incl. Japanese normally keep JP audio + EN/JP subs instead of EN audio)",
+    )
+    p.add_argument(
+        "--single-audio-track",
+        action="store_true",
+        help="Keep only one audio track per file (prefers non-commentary, then the "
+        "default-flagged track) - drops downmixes/duplicate-master extras",
+    )
+    p.add_argument(
+        "--drop-sdh",
+        action="store_true",
+        help="Drop SDH subtitle tracks when a plain (non-SDH) sibling of the same "
+        "language survives; detected via disposition flag, title, or byte-size "
+        "heuristic when neither is present",
+    )
+    p.add_argument(
+        "--drop-audio-codec",
+        default="",
+        help="Comma-separated ffprobe codec_name(s) to drop regardless of language "
+        "(e.g. 'dts'). The existing zero-audio safety net still applies: a file "
+        "whose ONLY audio track matches is left untouched, not silenced.",
+    )
+
+
+def cmd_scan(args):
+    cache = scan_mod.scan(
+        args.root,
+        args.cache,
+        jobs=args.jobs,
+        force=args.force,
+        on_progress=scan_mod._default_progress,
+    )
+    n = len(cache["files"])
+    errors = sum(1 for e in cache["files"].values() if "error" in e)
+    print(f"Scanned {n} files ({errors} errors). Cache: {args.cache}")
+    return 1 if errors else 0
+
+
+def cmd_stats(args):
+    cache = scan_mod.load_cache(args.cache)
+    if not cache["files"]:
+        print("No cache found -- run `scan` first.", file=sys.stderr)
+        return 1
+    policy = _policy_from_args(args)
+    report = stats_mod.build_report(cache, policy)
+    stats_mod.print_report(report, policy)
+    if args.show_errors and report["error_files"]:
+        print("\nFiles with probe errors:")
+        for rel, e in report["error_files"].items():
+            print(f"  {rel}: {e['error']}")
+
+
+def _print_plan_line(rel, plan_result):
+    tag = "  [anime: keep JP audio, EN+JP subs]" if plan_result.get("is_anime") else ""
+    print(f"  {rel}{tag}")
+    for t, reason in plan_result["drop_audio"]:
+        print(f"      - drop audio #{t['index']} {langs.display_name(t['language'])} [{reason}]")
+    for t, reason in plan_result["drop_subtitle"]:
+        print(f"      - drop sub   #{t['index']} {langs.display_name(t['language'])} [{reason}]")
+    if plan_result.get("fallback_audio_used"):
+        print(
+            "      ! no English/unknown audio found -- "
+            "kept original default track as a safety fallback"
+        )
+
+
+def cmd_plan(args):
+    cache = scan_mod.load_cache(args.cache)
+    if not cache["files"]:
+        print("No cache found -- run `scan` first.", file=sys.stderr)
+        return 1
+    policy = _policy_from_args(args)
+    count = audio_drop = sub_drop = 0
+    for rel, _entry, plan_result in apply_mod.candidates_from_cache(cache, policy, args.path):
+        if not plan_result["changed"]:
+            continue
+        if args.limit and count >= args.limit:
+            break
+        _print_plan_line(rel, plan_result)
+        count += 1
+        audio_drop += len(plan_result["drop_audio"])
+        sub_drop += len(plan_result["drop_subtitle"])
+    print(
+        f"\n{count} file(s) would change "
+        f"({audio_drop} audio tracks, {sub_drop} subtitle tracks dropped)."
+    )
+    print(
+        "Computed from the cache (fast, approximate). Run `apply` without --yes for an "
+        "authoritative live per-file dry run, or `apply --yes` to execute."
+    )
+
+
+def cmd_apply(args):
+    root = Path(args.root)
+    policy = _policy_from_args(args)
+    backup_dir = (
+        None
+        if args.no_backup
+        else (args.backup_dir or str(root / ".cache" / "trackstrip" / "originals"))
+    )
+
+    if args.yes and backup_dir is None:
+        print(
+            "!! Running with --yes --no-backup: "
+            "originals will be permanently deleted, not backed up."
+        )
+
+    exclude_dirs = frozenset({Path(backup_dir).resolve()}) if backup_dir else frozenset()
+
+    candidates = list(apply_mod.iter_target_files(root, args.path, args.limit, exclude_dirs))
+    changed = unchanged = errors = planned = 0
+    for abs_path in candidates:
+        result, plan_result = apply_mod.apply_one(
+            abs_path, root, policy, backup_dir, execute=args.yes
+        )
+        if result.status == "unchanged":
+            unchanged += 1
+        elif result.status == "planned":
+            planned += 1
+            _print_plan_line(result.rel, plan_result)
+            print(f"      $ {result.detail}")
+        elif result.status == "changed":
+            changed += 1
+            print(f"  [OK] {result.rel}  ({result.detail})")
+        elif result.status == "error":
+            errors += 1
+            print(f"  [ERROR] {result.rel}: {result.detail}", file=sys.stderr)
+
+    mode = "APPLIED" if args.yes else "DRY RUN (pass --yes to execute for real)"
+    print(f"\n[{mode}] changed={changed} planned={planned} unchanged={unchanged} errors={errors}")
+    if args.yes and backup_dir and changed:
+        print(f"Originals of changed files were moved under: {backup_dir}")
+    return 1 if errors else 0
+
+
+def cmd_transcode(args):
+    root = Path(args.root)
+    from_codecs = frozenset(c.strip().lower() for c in args.from_codec.split(",") if c.strip())
+    backup_dir = (
+        None
+        if args.no_backup
+        else (args.backup_dir or str(root / ".cache" / "trackstrip" / "originals"))
+    )
+
+    if args.yes and backup_dir is None:
+        print(
+            "!! Running with --yes --no-backup: "
+            "originals will be permanently deleted, not backed up."
+        )
+
+    exclude_dirs = frozenset({Path(backup_dir).resolve()}) if backup_dir else frozenset()
+
+    candidates = list(apply_mod.iter_target_files(root, args.path, args.limit, exclude_dirs))
+    changed = unchanged = errors = planned = 0
+    for abs_path in candidates:
+        result, plan_result = apply_mod.transcode_one(
+            abs_path, root, from_codecs, args.to_codec, args.bitrate, backup_dir, execute=args.yes
+        )
+        if result.status == "unchanged":
+            unchanged += 1
+        elif result.status == "planned":
+            planned += 1
+            assert plan_result is not None  # only None on the "error" status path
+            print(f"  {result.rel}")
+            for s in plan_result["matching"]:
+                print(
+                    f"      - transcode audio #{s['index']} {s.get('codec_name')} -> "
+                    f"{args.to_codec}@{args.bitrate}"
+                )
+            print(f"      $ {result.detail}")
+        elif result.status == "changed":
+            changed += 1
+            print(f"  [OK] {result.rel}  ({result.detail})")
+        elif result.status == "error":
+            errors += 1
+            print(f"  [ERROR] {result.rel}: {result.detail}", file=sys.stderr)
+
+    mode = "APPLIED" if args.yes else "DRY RUN (pass --yes to execute for real)"
+    print(f"\n[{mode}] changed={changed} planned={planned} unchanged={unchanged} errors={errors}")
+    if args.yes and backup_dir and changed:
+        print(f"Originals of changed files were moved under: {backup_dir}")
+    return 1 if errors else 0
+
+
+def cmd_purge_backups(args):
+    backup_dir = Path(args.backup_dir)
+    if not backup_dir.exists():
+        print(f"No backup directory at {backup_dir}, nothing to purge.")
+        return
+    size = sum(f.stat().st_size for f in backup_dir.rglob("*") if f.is_file())
+    if not args.yes:
+        print(
+            f"Would permanently delete {backup_dir} ({stats_mod.human_size(size)}). "
+            "Re-run with --yes to confirm."
+        )
+        return
+    shutil.rmtree(backup_dir)
+    print(f"Deleted {backup_dir} ({stats_mod.human_size(size)} freed).")
+
+
+def build_parser(default_root, default_cache):
+    p = argparse.ArgumentParser(
+        prog="psammophis track-strip",
+        description="Plex media library audio/subtitle track-trimming toolkit",
+    )
+    p.add_argument("--root", default=default_root, help="Media library root")
+    p.add_argument("--cache", default=default_cache, help="Path to scan cache JSON")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    sp = sub.add_parser("scan", help="Probe all media files with ffprobe and update the cache")
+    sp.add_argument("--jobs", type=int, default=8, help="Parallel ffprobe workers (default 8)")
+    sp.add_argument(
+        "--force", action="store_true", help="Re-probe every file, ignoring cache freshness"
+    )
+    sp.set_defaults(func=cmd_scan)
+
+    sp = sub.add_parser("stats", help="Print codec/language statistics from the cache")
+    sp.add_argument("--show-errors", action="store_true")
+    add_policy_args(sp)
+    sp.set_defaults(func=cmd_stats)
+
+    sp = sub.add_parser("plan", help="Fast cache-based preview of what `apply` would strip")
+    sp.add_argument(
+        "--path", help="Only consider files whose relative path contains this substring"
+    )
+    sp.add_argument("--limit", type=int, help="Stop after N changed files")
+    add_policy_args(sp)
+    sp.set_defaults(func=cmd_plan)
+
+    sp = sub.add_parser(
+        "apply", help="Remux files to strip non-English audio/subtitles (dry-run unless --yes)"
+    )
+    sp.add_argument(
+        "--path", help="Only consider files whose relative path contains this substring"
+    )
+    sp.add_argument("--limit", type=int, help="Stop after N files")
+    sp.add_argument(
+        "--yes", action="store_true", help="Actually execute the remux (default is a live dry run)"
+    )
+    sp.add_argument(
+        "--no-backup", action="store_true", help="Delete originals instead of backing them up"
+    )
+    sp.add_argument(
+        "--backup-dir",
+        help="Where to move stripped originals (default: <root>/.cache/trackstrip/originals)",
+    )
+    add_policy_args(sp)
+    sp.set_defaults(func=cmd_apply)
+
+    sp = sub.add_parser(
+        "transcode",
+        help="Re-encode audio tracks of a given codec to a more compatible "
+        "one (dry-run unless --yes); video is always stream-copied",
+    )
+    sp.add_argument(
+        "--from-codec",
+        default="dts",
+        help="Comma-separated ffprobe codec_name(s) to transcode away from (default: dts)",
+    )
+    sp.add_argument("--to-codec", default="eac3", help="Target audio codec (default: eac3)")
+    sp.add_argument("--bitrate", default="640k", help="Target audio bitrate (default: 640k)")
+    sp.add_argument(
+        "--path", help="Only consider files whose relative path contains this substring"
+    )
+    sp.add_argument("--limit", type=int, help="Stop after N files")
+    sp.add_argument(
+        "--yes",
+        action="store_true",
+        help="Actually execute the transcode (default is a live dry run)",
+    )
+    sp.add_argument(
+        "--no-backup", action="store_true", help="Delete originals instead of backing them up"
+    )
+    sp.add_argument(
+        "--backup-dir", help="Where to move originals (default: <root>/.cache/trackstrip/originals)"
+    )
+    sp.set_defaults(func=cmd_transcode)
+
+    sp = sub.add_parser(
+        "purge-backups", help="Permanently delete the backup directory of stripped originals"
+    )
+    sp.add_argument("--backup-dir", default=None)
+    sp.add_argument("--yes", action="store_true")
+    sp.set_defaults(func=cmd_purge_backups)
+
+    return p
+
+
+def main(argv=None, context=None) -> int:
+    default_root = str(resolve_default_root(feature_env="TRACKSTRIP_ROOT").path)
+    default_cache = str(Path(default_root) / ".cache" / "trackstrip" / "scan.json")
+    parser = build_parser(default_root, default_cache)
+    args = parser.parse_args(argv)
+    if args.command == "purge-backups" and args.backup_dir is None:
+        args.backup_dir = str(Path(args.root) / ".cache" / "trackstrip" / "originals")
+    args._context = context
+    result = args.func(args)
+    return 0 if result is None else int(result)
+
+
+if __name__ == "__main__":
+    main()

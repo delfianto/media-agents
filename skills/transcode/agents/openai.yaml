@@ -1,0 +1,4 @@
+interface:
+  display_name: "Transcode"
+  short_description: "Encode media to AV1 and Opus safely"
+  default_prompt: "Use $transcode to plan a safe AV1 and Opus transcode for this media."

@@ -1,0 +1,28 @@
+usage: analyze [-h] [--root ROOT] [--path PATH] [--limit LIMIT]
+               [--profile {film,anime}] [--grain-threshold GRAIN_THRESHOLD]
+               [--no-grain-routing] [--json]
+
+Read-only: probe a video, measure its grain/noise level, and report exactly
+which av1-transcode preset and backend (cpu/nvenc) its heuristics would pick
+and why -- the same decision av1-transcode's own `probe`/`run` make, surfaced
+on its own so it doesn't require running av1-transcode to see.
+
+options:
+  -h, --help            show this help message and exit
+  --root ROOT           Media library root
+  --path PATH           Only consider files whose relative path contains this
+                        substring
+  --limit LIMIT         Stop after N files
+  --profile {film,anime}
+                        Content profile for preset selection (default: film)
+                        -- see av1-transcode's SKILL.md for why this is never
+                        auto-detected
+  --grain-threshold GRAIN_THRESHOLD
+                        Grain/noise score at or above which the backend
+                        decision prefers cpu over nvenc (default: 0.012 -- see
+                        medialib.grain for how it's measured and how
+                        provisional this default still is)
+  --no-grain-routing    Don't measure per-file grain/noise -- report the pre-
+                        grain backend decision (nvenc whenever a GPU is
+                        available; DV/HDR10+ rules unchanged)
+  --json                Print one JSON object per file instead of text

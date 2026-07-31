@@ -1,0 +1,4 @@
+Error: Unknown option: --av1
+
+Did you mean option(s) below?
+  --avs

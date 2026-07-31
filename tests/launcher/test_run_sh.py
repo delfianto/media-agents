@@ -8,6 +8,7 @@ required for every case.
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import textwrap
@@ -69,7 +70,7 @@ def test_forwards_args_and_project_root(tmp_path):
         path_prepend=bin_dir,
     )
     assert result.returncode == 0, result.stderr
-    assert f"--project {REPO_ROOT}" in result.stdout or f"--project {REPO_ROOT}" in result.stdout
+    assert f"--project {REPO_ROOT}" in result.stdout
     assert "psammophis" in result.stdout
     assert "env-check" in result.stdout
     assert "--help" in result.stdout
@@ -182,3 +183,41 @@ def test_handles_args_with_spaces(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "Some Movie (2020)" in result.stdout
+
+
+def test_envrc_is_auto_exported_without_changing_caller_cwd(tmp_path):
+    checkout = tmp_path / "checkout with spaces"
+    checkout.mkdir()
+    launcher = checkout / "run.sh"
+    shutil.copy2(RUN_SH, launcher)
+    (checkout / ".envrc").write_text("FROM_ENVRC=available\ncd /\n")
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    bin_dir = tmp_path / "bin"
+    _write_stub_uv(
+        bin_dir,
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf 'FROM_ENVRC=%s\n' "${FROM_ENVRC-}"
+            printf 'cwd=%s\n' "$PWD"
+            printf 'project=%s\n' "$3"
+            """
+        ),
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env.pop("MEDIALIB_ROOT", None)
+    result = subprocess.run(
+        [str(launcher), "env-check"],
+        cwd=caller,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "FROM_ENVRC=available" in result.stdout
+    assert f"cwd={caller}" in result.stdout
+    assert f"project={checkout}" in result.stdout

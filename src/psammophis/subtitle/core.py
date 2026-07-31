@@ -65,6 +65,6 @@ def execute(plan: SubtitlePlan, client: OpenSubtitlesClient, *, overwrite: bool 
         file_id = results[0]["attributes"]["files"][0]["file_id"]
         plan.destination.parent.mkdir(parents=True, exist_ok=True)
         client.download_to(file_id, plan.destination)
-    except (OpenSubtitlesError, KeyError, IndexError) as exc:
+    except (OpenSubtitlesError, OSError, KeyError, IndexError) as exc:
         raise SubtitleError(str(exc)) from exc
     return "downloaded"

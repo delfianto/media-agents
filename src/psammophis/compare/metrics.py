@@ -3,7 +3,10 @@ import math
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+
+from psammophis.runtime.process import ProcessResult, ProcessSupervisor
 
 from .probe import VideoInfo
 
@@ -45,6 +48,7 @@ def run_vmaf_clip(
     threads: int,
     log_path: Path,
     frame_rate: float,
+    on_heartbeat: Callable[[], None] | None = None,
 ) -> list[dict[str, float]]:
     # Matroska commonly rounds independently encoded 24000/1001 timestamps
     # to milliseconds.  PTS-STARTPTS therefore pairs the wrong frame at
@@ -64,11 +68,10 @@ def run_vmaf_clip(
     for path in (reference, distorted):
         cmd.extend(["-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", str(path)])
     cmd.extend(["-filter_complex", graph, "-an", "-sn", "-f", "null", "-"])
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
+    result = _run_vmaf_process(cmd, on_heartbeat=on_heartbeat)
+    if result.returncode != 0:
         raise RuntimeError(
-            f"libvmaf failed for clip at {start:.3f}s ({proc.returncode}): "
-            f"{proc.stderr.strip()[-1000:]}"
+            f"libvmaf failed for clip at {start:.3f}s ({result.returncode}): {result.tail[-1000:]}"
         )
     data = json.loads(log_path.read_text())
     frames: list[dict[str, float]] = []
@@ -90,6 +93,14 @@ def run_vmaf_clip(
     return frames
 
 
+def _run_vmaf_process(
+    cmd: list[str],
+    *,
+    on_heartbeat: Callable[[], None] | None,
+) -> ProcessResult:
+    return ProcessSupervisor(cmd, on_heartbeat=on_heartbeat).run()
+
+
 def _frame_filter(info: VideoInfo) -> str:
     if info.is_hdr:
         return (
@@ -103,33 +114,36 @@ def _frame_filter(info: VideoInfo) -> str:
     return "scale=in_range=auto:out_range=full,format=rgb24"
 
 
-def extract_frame(path: Path, timestamp: float, output: Path, info: VideoInfo) -> None:
-    proc = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-nostdin",
-            "-v",
-            "error",
-            "-ss",
-            f"{timestamp:.6f}",
-            "-i",
-            str(path),
-            "-map",
-            "0:v:0",
-            "-frames:v",
-            "1",
-            "-vf",
-            _frame_filter(info),
-            "-y",
-            str(output),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
+def extract_frame(
+    path: Path,
+    timestamp: float,
+    output: Path,
+    info: VideoInfo,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> None:
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-v",
+        "error",
+        "-ss",
+        f"{timestamp:.6f}",
+        "-i",
+        str(path),
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "1",
+        "-vf",
+        _frame_filter(info),
+        "-y",
+        str(output),
+    ]
+    result = ProcessSupervisor(cmd, on_heartbeat=on_heartbeat, timeout=300).run()
+    if result.returncode != 0:
         raise RuntimeError(
-            f"frame extraction failed at {timestamp:.3f}s for {path}: {proc.stderr.strip()[-1000:]}"
+            f"frame extraction failed at {timestamp:.3f}s for {path}: {result.stderr[-1000:]}"
         )
 
 
@@ -137,14 +151,23 @@ def find_ssimulacra2() -> str | None:
     return shutil.which("ssimulacra2")
 
 
-def run_ssimulacra2(binary: str, reference: Path, distorted: Path) -> float:
-    proc = subprocess.run(
-        [binary, str(reference), str(distorted)], capture_output=True, text=True, timeout=300
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"ssimulacra2 failed ({proc.returncode}): {proc.stderr.strip()[:500]}")
-    for line in reversed(proc.stdout.splitlines()):
+def run_ssimulacra2(
+    binary: str,
+    reference: Path,
+    distorted: Path,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> float:
+    result = ProcessSupervisor(
+        [binary, str(reference), str(distorted)],
+        on_heartbeat=on_heartbeat,
+        timeout=300,
+    ).run()
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ssimulacra2 failed ({result.returncode}): {result.stderr.strip()[:500]}"
+        )
+    for line in reversed(result.stdout.splitlines()):
         match = _NUMBER_LINE.match(line)
         if match:
             return float(match.group(1))
-    raise RuntimeError(f"could not parse ssimulacra2 output: {proc.stdout.strip()[:500]}")
+    raise RuntimeError(f"could not parse ssimulacra2 output: {result.stdout.strip()[:500]}")

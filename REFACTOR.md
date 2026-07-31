@@ -34,7 +34,7 @@ Tracker symbols:
 | D-001 | The distribution, import package, and installed executable are all named `psammophis`. | One memorable identity and no generic commands such as `subtitle` added to `PATH`. |
 | D-002 | The only checkout launcher in the final layout is executable `run.sh` at the repository root. | Humans use `./run.sh`; skills use `.agents/run.sh`; both reach the same CLI. |
 | D-003 | This is one root Python project, not a nested project and not a uv workspace of per-skill packages. | The commands share code, deployment, release cadence, and safety conventions. |
-| D-004 | Public command names and their existing flags remain stable during the packaging move. | Packaging should not be mixed with an avoidable user-facing CLI rewrite. |
+| D-004 | Public command names and their existing flags remain stable during the packaging move. **Superseded in part by D-017.** | Packaging should not be mixed with an avoidable user-facing CLI rewrite. |
 | D-005 | `argparse` remains the CLI framework. | It already works, is stdlib, and is not the source of the current complexity. |
 | D-006 | Feature packages move under one `psammophis` namespace; their current internal names are initially preserved. | `psammophis.transcode` is less risky to migrate than simultaneously renaming it to `av1_transcode`. Public spelling remains `transcode`. |
 | D-007 | Skills remain workflow and policy adapters. Deterministic execution belongs to the Python application. | Humans and LLMs should invoke the same tested behavior. |
@@ -42,7 +42,7 @@ Tracker symbols:
 | D-009 | Rich is an accepted runtime dependency for interactive terminal rendering. | Multi-task, indeterminate, and log-safe progress displays are worth one focused dependency. |
 | D-010 | Core operations emit typed progress events; human, plain, JSONL, and journal outputs are separate consumers. | Presentation must not leak into encoding or mutation logic. |
 | D-011 | Progress and diagnostics go to `stderr`; command results remain on `stdout`. | This preserves normal shell composition and allows JSONL events to be captured separately. |
-| D-012 | Existing environment-variable names and persistent cache/backup paths remain recognized. | Renaming them during a structural refactor risks configuration drift and orphaned originals. |
+| D-012 | Existing environment-variable names and persistent cache/backup paths remain recognized. **Superseded for transcode by D-017.** | Renaming them during a structural refactor risks configuration drift and orphaned originals. |
 | D-013 | A final success event is emitted only after all verification and commit/swap work succeeds. | Encoder progress reaching 100% is not proof that the output was verified or installed safely. |
 | D-014 | No daemon, detached-job service, web UI, or background queue is part of this refactor. | Foreground execution, durable status, and a reconnectable event journal solve the immediate need without a new process-lifecycle system. |
 | D-015 | The refactor does not change codec policy, presets, matching thresholds, or destructive-operation defaults. | Those require separate domain review and real-media validation. |
@@ -79,9 +79,8 @@ Tracker symbols:
 - Replacing subprocess tools such as FFmpeg, NVEncC, mkvmerge, or mkvpropedit with Python
   libraries.
 - Rewriting the command implementations or merging feature-specific configuration models.
-- Renaming existing `AV1TRANSCODE_*`, `TRACKSTRIP_*`, `ORGANIZE_*`, `ARTWORK_*`, or
-  `SUBTITLE_*` settings.
-- Automatically moving `.cache/transcode` or `.cache/trackstrip` data.
+- Renaming existing `TRACKSTRIP_*`, `ORGANIZE_*`, `ARTWORK_*`, or `SUBTITLE_*` settings.
+- Automatically migrating pre-refactor transcode state or `.cache/trackstrip` data.
 - Making prompt-only MCP skills part of the Python executable.
 - Adding concurrency to encodes or mutation operations merely because the new progress layer
   can display multiple tasks.
@@ -195,11 +194,11 @@ Notes:
 | `lib/medialib/` | `src/psammophis/medialib/` | `[x]` |
 | `skills/analyze/scripts/analyze/` | `src/psammophis/analyze/` | `[x]` |
 | `skills/artwork/scripts/artwork/` | `src/psammophis/artwork/` | `[x]` |
-| `skills/transcode/scripts/transcode/` | `src/psammophis/transcode/` | `[x]` |
+| `skills/av1-transcode/scripts/av1transcode/` | `src/psammophis/transcode/` | `[x]` |
 | `skills/env-check/scripts/envcheck/` | `src/psammophis/envcheck/` | `[x]` |
 | `skills/mkvedit/scripts/mkvedit/` | `src/psammophis/mkvedit/` | `[x]` |
 | `skills/organize/scripts/organize/` | `src/psammophis/organize/` | `[x]` |
-| `skills/compare/scripts/compare/` | `src/psammophis/compare/` | `[x]` |
+| `skills/quality-compare/scripts/compare/` | `src/psammophis/compare/` | `[x]` |
 | `skills/subtitle/scripts/subtitle/` | `src/psammophis/subtitle/` | `[x]` |
 | `skills/track-strip/scripts/trackstrip/` | `src/psammophis/trackstrip/` | `[x]` |
 | `lib/test_*.py` | `tests/medialib/test_*.py` | `[x]` |
@@ -226,7 +225,7 @@ rewrites into those move commits.
 | `subtitle` | `psammophis.subtitle.cli` | none | dry-run plan, missing credential behavior |
 | `track-strip` | `psammophis.trackstrip.cli` | `scan`, `stats`, `plan`, `apply`, `transcode`, `purge-backups` | help for every subcommand; cache and dry-run parity |
 
-Public invocations change only in their prefix:
+The checkout launcher changes as follows; final command names are the ones in the matrix above:
 
 ```text
 .agents/scripts/run-skill track-strip scan
@@ -364,7 +363,7 @@ Python code must no longer derive the media-library root from `__file__`, `sys.a
 ancestor literally named `.agents`. For root-oriented commands, use this precedence:
 
 1. Explicit command `--root`.
-2. Existing feature-specific root variable, where supported (`AV1TRANSCODE_ROOT` or
+2. Existing feature-specific root variable, where supported (`TRANSCODE_ROOT` or
    `TRACKSTRIP_ROOT`).
 3. `MEDIALIB_ROOT`.
 4. The invocation working directory.
@@ -387,14 +386,14 @@ Safety requirements:
 Once no caller depends on source-location discovery, remove `medialib.libroot` and its tests.
 Retain only genuinely useful logical-path helpers in the shell launcher.
 
-## Compatibility for configuration and persistent state
+## Configuration and persistent state contract
 
 The following names and locations remain valid through this refactor:
 
 | Contract | Required behavior |
 | --- | --- |
 | `MEDIALIB_ROOT` | Continue to work for root-oriented commands. |
-| `AV1TRANSCODE_*` | Continue current flag/environment/`.env` precedence. |
+| `TRANSCODE_*` | Use current flag/environment/`.env` precedence; no old-prefix fallback. |
 | `TRACKSTRIP_ROOT` | Continue to override the shared root. |
 | `ORGANIZE_*`, `ARTWORK_*`, `SUBTITLE_*` | Preserve names and existing shared-key fallbacks. |
 | `.cache/transcode/originals` | Continue as the default AV1 backup location and remain visible to `purge-backups`. |
@@ -414,9 +413,8 @@ and names the Psammophis state directory directly (so its runs live at `PATH/run
 a contextual root nor `--state-dir` is available, live reporters still work but persistent
 journaling stays disabled rather than writing unexpectedly into an arbitrary working directory.
 
-Do not move legacy backup or scan data underneath that new directory in this refactor. A future
-state-layout migration must support discovery of both old and new paths, include rollback, and
-be reviewed as a media-safety change.
+Do not move existing backup or scan data underneath the run-journal directory. Per D-017, the
+application intentionally does not discover or migrate pre-refactor transcode paths.
 
 ## Output and exit-code contract
 
@@ -869,16 +867,16 @@ Exit criteria:
 
 Objective: use the common event system anywhere work is long enough or batched enough to benefit.
 
-- [~] `analyze`: reporter infrastructure ready; full per-item phases not yet wired.
-- [~] `artwork`: reporter infrastructure ready; full phases not yet wired.
+- [x] `analyze`: per-item probe and grain-measurement phases.
+- [x] `artwork`: per-item identify and download phases.
 - [x] `transcode`: full phase and encode progress from Phase 5.
-- [~] `env-check`: optional events deferred (fast command).
-- [~] `mkvedit`: reporter infrastructure ready; full phases not yet wired.
-- [~] `organize`: reporter infrastructure ready; full phases not yet wired.
-- [~] `compare`: reporter infrastructure ready; metric-phase events not yet wired.
-- [~] `subtitle`: reporter infrastructure ready; full phases not yet wired.
-- [~] `track-strip scan`: still uses legacy scan progress callback.
-- [~] `track-strip apply/transcode`: exit codes + snapshots done; event phases not fully wired.
+- [x] `env-check`: concise per-check item events (fast command; no artificial phases).
+- [x] `mkvedit`: inspect, backup, edit, verify, and rollback phases.
+- [x] `organize`: per-item identify and commit phases.
+- [x] `compare`: preflight, probe, VMAF, SSIMULACRA2, and image phases.
+- [x] `subtitle`: per-item plan and download phases.
+- [x] `track-strip scan`: per-item completion and aggregate scan progress events.
+- [x] `track-strip apply/transcode`: probe, remux, verify, backup, and commit phases.
 - [x] Keep fast, single-step operations concise rather than manufacturing meaningless bars.
 
 Exit criteria:
@@ -935,7 +933,8 @@ Objective: prove packaging, compatibility, progress, and media safety together.
 - [x] Run a short FFmpeg NVENC encode when compatible hardware is present.
 - [x] Run a short NVEncC dynamic-metadata encode when compatible source/hardware is present.
 - [x] Confirm encoder completion is followed by visible verification and commit phases.
-- [x] Confirm existing real backup/cache/log locations remain discoverable and untouched.
+- [x] Confirm current backup/cache/log defaults are exact and no real pre-refactor state is
+  migrated or deleted implicitly.
 - [x] Review `git diff` for accidental domain/preset/policy changes.
 
 Exit criteria:
@@ -959,7 +958,7 @@ Exit criteria:
 | 4 | Typed events and durable journal | `[x]` | 3 |
 | 5 | Process supervisor and encoder parsers | `[x]` | 4 |
 | 6 | Human/plain/JSONL reporters | `[x]` | 4, 5 |
-| 7 | Progress across all relevant commands | `[~]` (av1 full; others ready for sink wiring) | 6 |
+| 7 | Progress across all relevant commands | `[x]` | 6 |
 | 8 | Documentation and legacy cleanup | `[x]` | 1–7 |
 | 9 | Final validation and rollout | `[x]` | 8 |
 
@@ -967,26 +966,26 @@ Exit criteria:
 
 | Command | Moved | Help parity | Exit contract | Events | Human progress | JSONL | Skill updated | Smoke |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `analyze` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
-| `artwork` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
+| `analyze` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| `artwork` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
 | `transcode` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
-| `env-check` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
-| `mkvedit` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
-| `organize` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
-| `compare` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
+| `env-check` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| `mkvedit` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| `organize` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| `compare` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
 | `runs` | n/a | `[x]` | `[x]` | `[x]` | n/a | `[x]` | n/a | `[x]` |
-| `subtitle` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
-| `track-strip` | `[x]` | `[x]` | `[x]` | `[~]` | `[~]` | `[~]` | `[x]` | `[x]` |
+| `subtitle` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| `track-strip` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
 
 ## Compatibility tracker
 
-- [x] All existing public command and subcommand names preserved.
+- [x] Final public names are only `transcode` and `compare`; tests reject the removed names.
 - [x] All existing flags preserved or intentionally deprecated with documentation.
-- [x] Existing environment-variable precedence preserved.
+- [x] Environment-variable precedence preserved under the final `TRANSCODE_*` prefix.
 - [x] Existing `.env` parsing behavior preserved.
-- [x] Existing AV1 backup directory recognized.
-- [x] Existing AV1 log directory recognized.
-- [x] Existing AV1 log path remains live and useful with `tail -f` during an encode.
+- [x] `.cache/transcode/originals` is the sole transcode backup default and purge target.
+- [x] `.cache/transcode/logs` is the sole transcode log default.
+- [x] The transcode log path remains live and useful with `tail -f` during an encode.
 - [x] Existing track-strip backup directory recognized.
 - [x] Existing track-strip scan cache recognized.
 - [x] Existing dry-run defaults preserved.
@@ -1011,7 +1010,7 @@ Exit criteria:
 | `.agents/run.sh` symlink smoke | n/a | `[x]` | `[x]` | |
 | Plain/non-TTY reporter | n/a | n/a | `[x]` | No ANSI/CR. |
 | JSONL schema/terminal event | n/a | n/a | `[x]` | Parse every event. |
-| SIGINT/SIGTERM handling | n/a | n/a | `[~]` | Cancel path implemented; not stress-tested on multi-hour encode. | Original remains safe. |
+| SIGINT/SIGTERM handling | n/a | n/a | `[x]` | Process-group cancellation, rollback, and terminal-event tests. | Original remains safe. |
 | FFmpeg CPU short encode | n/a | n/a | `[x]` | Separate output directory. |
 | FFmpeg NVENC short encode | n/a | n/a | `[x]` | If hardware available. |
 | NVEncC metadata short encode | n/a | n/a | `[x]` | If source/hardware available. |
@@ -1022,7 +1021,7 @@ Exit criteria:
 | --- | --- | --- | --- | --- |
 | R-001 | Mechanical moves accidentally alter codec/policy behavior. | High | Separate move commits, baseline fixtures, full tests, real short encode review. | Mitigated |
 | R-002 | New root resolution points an applied operation at the wrong directory. | Critical | Explicit precedence, source recorded in events, broad-root rejection, symlink launcher tests, dry-run default. | Mitigated |
-| R-003 | Renamed cache paths orphan backups or make purge target the wrong directory. | Critical | Do not rename legacy paths; test discovery and exact purge defaults. | Mitigated |
+| R-003 | Renamed cache paths orphan backups or make purge target the wrong directory. | Critical | D-017 accepts the breaking cutover; exact `.cache/transcode` defaults and purge targets are tested, with no implicit migration. | Accepted |
 | R-004 | Progress UI reports success before verification or final move. | Critical | Event phase model and terminal-event ordering tests. | Mitigated |
 | R-005 | A subprocess pipe fills and deadlocks a multi-hour encode. | High | Concurrently drain both streams; stress test with a noisy fake process. | Mitigated |
 | R-006 | NVEncC changes its human progress format. | Medium | Fixture-based adapter, tolerant parser, indeterminate heartbeat fallback, raw logs. | Mitigated |
@@ -1035,6 +1034,7 @@ Exit criteria:
 | R-013 | Rich behaves badly in pipes, narrow terminals, or `NO_COLOR`. | Low | Auto TTY detection, plain fallback, focused renderer tests. | Mitigated |
 | R-014 | Lockfile or build backend silently selects Python below 3.14. | High | `[project].requires-python >=3.14`, `.python-version`, locked project, wheel smoke. | Mitigated |
 | R-015 | Skill instructions relaunch an already-running encode. | Critical | Run IDs, journal/status commands, explicit same-session monitoring instructions. | Mitigated |
+| R-016 | Moving an original away before installing verified output leaves an empty media path during interruption or power loss. | Critical | Stage a hard-linked or complete fsynced backup while the source remains live, then atomically install; transaction and cancellation tests cover failure windows. | Mitigated |
 
 ## Investigation tracker
 
@@ -1077,6 +1077,8 @@ Append entries as work progresses.
 | --- | --- | --- | --- | --- |
 | 2026-07-31 | Plan | Initial detailed plan created from repository audit and agreed naming/progress direction. | Command/package coverage checked; code fences balanced; whitespace check clean. | — |
 | 2026-07-31 | 0–9 | Implemented full packaging refactor: `src/psammophis` app, `run.sh`, events/journal/reporters/process supervisor, exit-code normalization, skill docs, legacy cleanup. Baseline under `baseline/`. | pytest 433 passed; ruff/basedpyright clean; wheel install help matrix; JSONL dry-run; short CPU AV1 encode to separate output dir; `.agents` symlink launcher smoke. | — |
+| 2026-07-31 | Review | Deep post-implementation hardening: process-group cancellation and CR progress parsing, reliable journals/reporters, complete command instrumentation, protected purge roots, atomic media/sidecar/cache writes, staged backups without a delete gap, batch collision checks, and corrected documentation. | Full final gate recorded below. | — |
+| 2026-08-01 | Final verification | Completed the rename cleanup and final safety pass; `transcode` and `compare` are the only current public command names, with no compatibility aliases or legacy namespace fallback. | `ruff check .`; `basedpyright .`; `pytest` 513 passed; `uv build`; fresh-wheel Python 3.14 smoke for `psammophis`, `transcode`, and `compare`; old command names rejected with exit 2; `run.sh --version`; `git diff --check`. | — |
 
 ## Decision log
 
@@ -1086,3 +1088,5 @@ Append only material deviations or clarifications; do not rewrite history silent
 | --- | --- | --- | --- | --- |
 | 2026-07-31 | D-001–D-015 | Initial decisions recorded in the locked-decision table. | Capture the agreed target before implementation. | Implementation starts at Phase 0; no application code changed by this plan. |
 | 2026-07-31 | D-016 | Use `uv_build>=0.9.30,<0.13.0` as the PEP 517 backend. | Compatible with installed uv 0.12.0 and published uv_build 0.9.30. | Recorded in pyproject.toml `[build-system]`. |
+| 2026-07-31 | D-017 | Make `transcode` and `compare` the only public/skill names, and make `TRANSCODE_*` plus `.cache/transcode/` the only current transcode configuration/state namespace. | The user explicitly chose a clean break and rejected compatibility mode. | Supersedes the relevant parts of D-004 and D-012; no aliases, old-prefix fallback, old-cache discovery, or automatic migration. Historical baseline artifacts retain their original names. |
+| 2026-07-31 | D-018 | A retained original is staged before replacement rather than moved away before commit. | Rollback after a move still leaves a crash/power-loss gap, especially across filesystems. | Same-filesystem backups use hard links; cross-filesystem backups use exclusive fsynced copies; verified output then lands atomically. |

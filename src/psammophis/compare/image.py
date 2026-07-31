@@ -1,8 +1,10 @@
 import re
 import shutil
-import subprocess
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from psammophis.runtime.process import ProcessSupervisor
 
 from .metrics import run_ssimulacra2
 
@@ -48,8 +50,12 @@ def check_imagemagick() -> str:
     return binary
 
 
-def probe_image(binary: str, path: Path) -> ImageInfo:
-    proc = subprocess.run(
+def probe_image(
+    binary: str,
+    path: Path,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> ImageInfo:
+    result = ProcessSupervisor(
         [
             binary,
             "identify",
@@ -58,13 +64,12 @@ def probe_image(binary: str, path: Path) -> ImageInfo:
             "%w\t%h\t%z\t%[colorspace]\t%[channels]\n",
             str(path),
         ],
-        capture_output=True,
-        text=True,
+        on_heartbeat=on_heartbeat,
         timeout=120,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"ImageMagick cannot identify {path}: {proc.stderr.strip()[:500]}")
-    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    ).run()
+    if result.returncode != 0:
+        raise RuntimeError(f"ImageMagick cannot identify {path}: {result.stderr[:500]}")
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
     if len(lines) != 1:
         raise ValueError(
             f"{path} contains {len(lines)} frames; animated image comparison is not supported"
@@ -84,8 +89,13 @@ def probe_image(binary: str, path: Path) -> ImageInfo:
     )
 
 
-def normalize_image(binary: str, source: Path, output: Path) -> None:
-    proc = subprocess.run(
+def normalize_image(
+    binary: str,
+    source: Path,
+    output: Path,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> None:
+    result = ProcessSupervisor(
         [
             binary,
             str(source),
@@ -98,14 +108,11 @@ def normalize_image(binary: str, source: Path, output: Path) -> None:
             "16",
             f"PNG64:{output}",
         ],
-        capture_output=True,
-        text=True,
+        on_heartbeat=on_heartbeat,
         timeout=300,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"ImageMagick normalization failed for {source}: {proc.stderr.strip()[:500]}"
-        )
+    ).run()
+    if result.returncode != 0:
+        raise RuntimeError(f"ImageMagick normalization failed for {source}: {result.stderr[:500]}")
 
 
 def _parse_metric(name: str, output: str) -> float:
@@ -119,8 +126,14 @@ def _parse_metric(name: str, output: str) -> float:
     return float(values[0])
 
 
-def compare_metric(binary: str, metric: str, reference: Path, distorted: Path) -> float:
-    proc = subprocess.run(
+def compare_metric(
+    binary: str,
+    metric: str,
+    reference: Path,
+    distorted: Path,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> float:
+    result = ProcessSupervisor(
         [
             binary,
             "compare",
@@ -130,16 +143,14 @@ def compare_metric(binary: str, metric: str, reference: Path, distorted: Path) -
             str(distorted),
             "null:",
         ],
-        capture_output=True,
-        text=True,
+        on_heartbeat=on_heartbeat,
         timeout=300,
-    )
-    if proc.returncode not in {0, 1}:
+    ).run()
+    if result.returncode not in {0, 1}:
         raise RuntimeError(
-            f"ImageMagick {metric} comparison failed ({proc.returncode}): "
-            f"{proc.stderr.strip()[:500]}"
+            f"ImageMagick {metric} comparison failed ({result.returncode}): {result.stderr[:500]}"
         )
-    return _parse_metric(metric, proc.stderr or proc.stdout)
+    return _parse_metric(metric, result.stderr or result.stdout)
 
 
 def compare_images(
@@ -148,16 +159,17 @@ def compare_images(
     temp: Path,
     ssimulacra_binary: str | None,
     ssimulacra_status: str,
+    on_heartbeat: Callable[[], None] | None = None,
 ) -> dict:
     magick = check_imagemagick()
-    source_reference = probe_image(magick, reference_path)
-    source_distorted = probe_image(magick, distorted_path)
+    source_reference = probe_image(magick, reference_path, on_heartbeat)
+    source_distorted = probe_image(magick, distorted_path, on_heartbeat)
     reference_png = temp / "reference.png"
     distorted_png = temp / "distorted.png"
-    normalize_image(magick, reference_path, reference_png)
-    normalize_image(magick, distorted_path, distorted_png)
-    normalized_reference = probe_image(magick, reference_png)
-    normalized_distorted = probe_image(magick, distorted_png)
+    normalize_image(magick, reference_path, reference_png, on_heartbeat)
+    normalize_image(magick, distorted_path, distorted_png, on_heartbeat)
+    normalized_reference = probe_image(magick, reference_png, on_heartbeat)
+    normalized_distorted = probe_image(magick, distorted_png, on_heartbeat)
     if (normalized_reference.width, normalized_reference.height) != (
         normalized_distorted.width,
         normalized_distorted.height,
@@ -168,12 +180,23 @@ def compare_images(
             f"distorted {normalized_distorted.width}x{normalized_distorted.height}"
         )
     metrics = {
-        "ssim": compare_metric(magick, "SSIM", reference_png, distorted_png),
-        "psnr": compare_metric(magick, "PSNR", reference_png, distorted_png),
-        "normalized_rmse": compare_metric(magick, "RMSE", reference_png, distorted_png),
+        "ssim": compare_metric(magick, "SSIM", reference_png, distorted_png, on_heartbeat),
+        "psnr": compare_metric(magick, "PSNR", reference_png, distorted_png, on_heartbeat),
+        "normalized_rmse": compare_metric(
+            magick,
+            "RMSE",
+            reference_png,
+            distorted_png,
+            on_heartbeat,
+        ),
     }
     if ssimulacra_binary:
-        metrics["ssimulacra2"] = run_ssimulacra2(ssimulacra_binary, reference_png, distorted_png)
+        metrics["ssimulacra2"] = run_ssimulacra2(
+            ssimulacra_binary,
+            reference_png,
+            distorted_png,
+            on_heartbeat,
+        )
         ssimulacra_status = "measured"
     return {
         "media_type": "image",

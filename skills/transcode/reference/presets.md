@@ -43,7 +43,7 @@ Every encode now caps output video bitrate to `presets.MAX_BITRATE_FRACTION_OF_S
 - **CPU (libsvtav1)**: `--mbr <kbps>` alongside `--crf` puts the encoder in "Capped CRF" mode — confirmed via its own startup log (`BRC mode ... capped CRF`) once `mbr` is set.
 - **NVENC**: `-maxrate`/`-bufsize` (bufsize = 2x maxrate) alongside `-cq`, the standard "capped VBR" pattern — confirmed directly: uncapped `cq=22` on a real clip produced ~17.9 Mbps; adding `-maxrate 4M -bufsize 8M` brought it to ~4.4 Mbps.
 
-This is a safety net, not a target: on a genuine high-bitrate remux source the cap essentially never binds (CRF/CQ-driven output lands far under 85% of 40-80 Mbps anyway), so there's no quality cost in the common case. Override with `--max-bitrate-fraction` (or `AV1TRANSCODE_MAX_BITRATE_FRACTION` in `.env`), or disable entirely with `--no-bitrate-cap` for pure CRF/CQ.
+This is a safety net, not a target: on a genuine high-bitrate remux source the cap essentially never binds (CRF/CQ-driven output lands far under 85% of 40-80 Mbps anyway), so there's no quality cost in the common case. Override with `--max-bitrate-fraction` (or `TRANSCODE_MAX_BITRATE_FRACTION` in `.env`), or disable entirely with `--no-bitrate-cap` for pure CRF/CQ.
 
 ## Grain-aware backend routing (both backends)
 
@@ -59,11 +59,11 @@ Grain can only ever push `auto`'s decision from `nvenc` to `cpu`, never the reve
 
 `langfilter.py` does plain by-language keep/drop filtering for audio and subtitle tracks — deliberately simple (no commentary/SDH/anime-release nuance, that's still `track-strip`'s job), added because the common case (keep the English track(s), drop the rest) is worth having directly in this skill's default behavior rather than requiring a separate pass first.
 
-- Default language is `eng` for both audio and subtitles (`--audio-lang`/`--subtitle-lang`, or `AV1TRANSCODE_AUDIO_LANG`/`AV1TRANSCODE_SUBTITLE_LANG` in `.env`); pass `all` to keep every track, no filtering.
+- Default language is `eng` for both audio and subtitles (`--audio-lang`/`--subtitle-lang`, or `TRANSCODE_AUDIO_LANG`/`TRANSCODE_SUBTITLE_LANG` in `.env`); pass `all` to keep every track, no filtering.
 - Audio has a safety net: if nothing matches the target language, every original audio track is kept instead of producing a silent file — the same "don't guess your way into no audio" principle as track-strip's `track_policy` fallback. Subtitles have no such guarantee (and don't need one): a file with zero subtitle tracks is a completely normal outcome.
 - The first kept audio/subtitle track gets an explicit `default` disposition flag (and every other kept track of that type gets explicitly cleared to `0`), so a player auto-selects the right track regardless of what the source's own (possibly stale) disposition flags said.
 - Switching to explicit per-index `-map` (needed to filter at all) replaced the previous blanket `-map 0`, which also fixed a latent issue: a source with embedded cover art (a second, `attached_pic`-flagged "video" stream) would previously have had `-c:v` apply to *both* streams. Only `probed["video"]["index"]` (the real, non-cover-art video stream `probe.py` already identifies) is ever mapped as video now.
 
 ## Output location
 
-Defaults to in-place (same swap-behind-a-backup model as track-strip's `apply`). `--output-dir` (or `AV1TRANSCODE_OUTPUT_DIR`) writes the converted file to a separate directory instead, flat under the source's own filename (not mirroring its path relative to `--root`) — in that mode the original source is never touched at all (no backup, no delete), since nothing about it changed. A pre-existing file at the destination is left alone (error) unless `--overwrite-existing` is passed.
+Defaults to in-place (same swap-behind-a-backup model as track-strip's `apply`). `--output-dir` (or `TRANSCODE_OUTPUT_DIR`) writes the converted file to a separate directory instead, flat under the source's own filename (not mirroring its path relative to `--root`) — in that mode the original source is never touched at all (no backup, no delete), since nothing about it changed. A pre-existing file at the destination is left alone (error) unless `--overwrite-existing` is passed.

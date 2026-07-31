@@ -6,25 +6,38 @@ in behind a backup. Same temp-file -> verify -> backup -> swap shape as
 track-strip's apply.py, just built for a much longer-running job.
 """
 
-import re
+import contextlib
+import os
 import shutil
 import subprocess
-import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import IO
 
 from psammophis.medialib import av1_backend, colorinfo
 from psammophis.medialib import av1_presets as presets
 from psammophis.medialib.grain import GrainMeasurement, measure_grain
 from psammophis.medialib.svt import SvtImplementation, detect_svt_implementation
 from psammophis.medialib.videoprobe import probe_file
+from psammophis.runtime.filesystem import (
+    RecoveryRequired,
+    discard_staged_backup,
+    fsync_directory,
+    install_no_replace,
+    install_verified,
+    installation_completed,
+    path_exists,
+    stage_backup,
+)
+from psammophis.runtime.signals import CancellationRequested
 
 from . import command as command_mod
 from . import langfilter, nvencc_cmd
 
 DECODE_SPOT_CHECK_SECONDS = 3
-DEFAULT_PROGRESS_INTERVAL = 10.0  # seconds between throttled progress lines to stdout
+
+StructuredProgressCallback = Callable[[dict[str, float | str | None]], None]
+PhaseCallback = Callable[[str, str], None]
+HeartbeatCallback = Callable[[str], None]
 
 # Conventional poster/cover filenames -- checked in this order next to the
 # source video. "poster.jpg" is what artwork itself leaves
@@ -51,18 +64,6 @@ def find_sidecar_cover(video_path: Path) -> Path | None:
     return None
 
 
-_PROGRESS_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.\d+.*speed=\s*([\d.]+)x")
-# ffmpeg's periodic stats line always starts this way, even before it has a
-# resolved time/speed to report (early frames print "time=N/A speed=N/A"
-# while the encoder's lookahead buffer fills) -- checked separately from
-# _PROGRESS_RE so those early not-yet-resolved ticks still count as ticks for
-# throttling purposes instead of bypassing it. A real 4K HDR/Dolby Vision clip
-# from this library spent its first ~10s emitting exactly such N/A lines
-# every 0.5s, which -- before this was split out -- slipped past the
-# throttle entirely since _PROGRESS_RE didn't match them.
-_TICK_PREFIX = "frame="
-
-
 class TranscodeResult:
     def __init__(self, rel: str, status: str, detail: str = ""):
         self.rel = rel
@@ -70,52 +71,13 @@ class TranscodeResult:
         self.detail = detail
 
 
-def _iter_ffmpeg_lines(stream: IO[str]):
-    """ffmpeg separates its periodic stats updates with `\\r` (meant to
-    overwrite the previous update on a real terminal) and everything else
-    with `\\n` -- both are treated as line breaks here since every update,
-    tick or not, gets its own row in the persisted log file."""
-    buf = ""
-    while True:
-        ch = stream.read(1)
-        if ch == "":
-            break
-        if ch in ("\r", "\n"):
-            if buf:
-                yield buf
-                buf = ""
-        else:
-            buf += ch
-    if buf:
-        yield buf
-
-
-def _format_hms(seconds: float) -> str:
-    seconds = max(0, int(seconds))
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-
-def _annotate_progress(line: str, total_duration: float | None) -> str:
-    match = _PROGRESS_RE.search(line)
-    if not match or not total_duration or total_duration <= 0:
-        return line
-    hours, minutes, seconds, speed = match.groups()
-    current = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-    speed_val = float(speed)
-    pct = min(100.0, current / total_duration * 100)
-    eta = (total_duration - current) / speed_val if speed_val > 0 else None
-    eta_str = _format_hms(eta) if eta is not None else "?"
-    return f"[{pct:5.1f}% eta {eta_str}] {line}"
-
-
 def stream_process(
     cmd: list[str],
     log_path: Path,
     total_duration: float | None,
-    on_progress: Callable[[str], None] | None = None,
-    min_progress_interval: float = DEFAULT_PROGRESS_INTERVAL,
+    on_progress: StructuredProgressCallback | None = None,
+    on_heartbeat: Callable[[], None] | None = None,
+    min_progress_interval: float = 1.0,
 ) -> tuple[int, str]:
     """Run `cmd`, writing every output line to `log_path` in real time
     (so `tail -f log_path` gives full-fidelity live monitoring regardless of
@@ -134,56 +96,27 @@ def stream_process(
 
     is_ffmpeg = bool(cmd) and Path(cmd[0]).name.startswith("ffmpeg")
     ffmpeg_parser = make_ffmpeg_progress_parser(total_duration) if is_ffmpeg else None
-    last_emit = 0.0
 
-    def progress_parser(stream_name: str, line: str) -> dict | None:
+    def progress_parser(stream_name: str, line: str) -> dict[str, float | str | None] | None:
         if ffmpeg_parser is not None and stream_name == "stdout":
             return ffmpeg_parser(stream_name, line)
         return parse_nvencc_progress_line(stream_name, line)
 
-    def on_structured(parsed: dict) -> None:
-        nonlocal last_emit
+    def on_structured(parsed: dict[str, float | str | None]) -> None:
         if on_progress is None:
             return
-        now = time.monotonic()
-        if now - last_emit < min_progress_interval:
-            return
-        last_emit = now
-        percent = parsed.get("percent")
-        eta = parsed.get("eta_seconds")
-        if percent is not None:
-            eta_str = _format_hms(float(eta)) if isinstance(eta, (int, float)) else "?"
-            on_progress(f"[{float(percent):5.1f}% eta {eta_str}]")
-        else:
-            raw = parsed.get("raw")
-            on_progress(str(raw) if raw is not None else str(parsed))
-
-    def on_line(stream_name: str, line: str) -> None:
-        if on_progress is None:
-            return
-        # Forward non-progress diagnostic lines immediately (banners, errors).
-        if is_ffmpeg and stream_name == "stdout":
-            return
-        if parse_nvencc_progress_line(stream_name, line) is not None:
-            return
-        if line.startswith(_TICK_PREFIX):
-            return
-        if line.strip():
-            on_progress(line)
+        parsed.setdefault("backend", "ffmpeg" if is_ffmpeg else "nvencc")
+        on_progress(parsed)
 
     result = ProcessSupervisor(
         cmd,
         log_path=log_path,
         progress_parser=progress_parser if on_progress is not None else None,
         on_progress=on_structured if on_progress is not None else None,
-        on_line=on_line if on_progress is not None else None,
-        min_progress_interval=0.0,  # structured path throttles above
+        on_heartbeat=on_heartbeat,
+        min_progress_interval=min_progress_interval,
     ).run()
     return result.returncode, result.tail
-
-
-# Back-compat alias for any external callers/tests.
-stream_ffmpeg = stream_process
 
 
 def _decode_spot_check(path: Path, seconds: int = DECODE_SPOT_CHECK_SECONDS) -> tuple[bool, str]:
@@ -328,9 +261,30 @@ def _has_measured_codec_statistics(stream: dict) -> bool:
     )
 
 
-def _attach_cover_remux(video_path: Path, cover_image_path: Path) -> None:
+def _run_postprocess(
+    cmd: list[str],
+    *,
+    timeout: float,
+    on_heartbeat: Callable[[], None] | None = None,
+):
+    from psammophis.runtime.process import ProcessSupervisor
+
+    return ProcessSupervisor(
+        cmd,
+        on_heartbeat=on_heartbeat,
+        timeout=timeout,
+    ).run()
+
+
+def _attach_cover_remux(
+    video_path: Path,
+    cover_image_path: Path,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> None:
     """NVEncC does not take our Matroska -attach path; remux with ffmpeg to add cover."""
     tmp = video_path.with_name(video_path.stem + ".cover-tmp.mkv")
+    if path_exists(tmp):
+        raise FileExistsError(f"cover-art temporary file already exists: {tmp}")
     probed = probe_file(video_path)
     cmd = [
         "ffmpeg",
@@ -345,23 +299,26 @@ def _attach_cover_remux(video_path: Path, cover_image_path: Path) -> None:
         *command_mod.cover_art_args(cover_image_path, probed.get("attachment_count", 0)),
         str(tmp),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if proc.returncode != 0:
+    result = _run_postprocess(cmd, timeout=600, on_heartbeat=on_heartbeat)
+    if result.returncode != 0:
         tmp.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"cover-art remux failed ({proc.returncode}): {(proc.stderr or '')[-500:]}"
-        )
-    tmp.replace(video_path)
+        raise RuntimeError(f"cover-art remux failed ({result.returncode}): {result.tail[-500:]}")
+    os.replace(tmp, video_path)
+    fsync_directory(video_path.parent)
 
 
-def _refresh_track_statistics(video_path: Path) -> None:
+def _refresh_track_statistics(
+    video_path: Path,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> None:
     """Measure the encoded tracks and write accurate Matroska BPS/duration/
     frame/byte counters without remuxing the media payload."""
     cmd = ["mkvpropedit", str(video_path), "--add-track-statistics-tags"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()[-500:]
-        raise RuntimeError(f"track-statistics refresh failed ({proc.returncode}): {detail}")
+    result = _run_postprocess(cmd, timeout=3600, on_heartbeat=on_heartbeat)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"track-statistics refresh failed ({result.returncode}): {result.tail[-500:]}"
+        )
 
 
 def build_encode_command(
@@ -417,6 +374,55 @@ def build_encode_command(
     )
 
 
+def _emit_phase(callback: PhaseCallback | None, phase: str, state: str) -> None:
+    if callback is not None:
+        callback(phase, state)
+
+
+def _commit_in_place(
+    source: Path,
+    temporary: Path,
+    final_path: Path,
+    backup_dir: str | None,
+    relative_path: Path,
+    on_phase: PhaseCallback | None = None,
+) -> None:
+    """Install verified output without creating an unrecoverable delete gap."""
+    if final_path != source and path_exists(final_path):
+        raise FileExistsError(f"{final_path} already exists, refusing to overwrite")
+    backup_path = Path(backup_dir) / relative_path if backup_dir is not None else None
+    backup_staged = False
+    active_phase: str | None = None
+    try:
+        if backup_path is not None:
+            active_phase = "backup"
+            _emit_phase(on_phase, active_phase, "started")
+            stage_backup(source, backup_path)
+            backup_staged = True
+            _emit_phase(on_phase, active_phase, "succeeded")
+        active_phase = "commit"
+        _emit_phase(on_phase, active_phase, "started")
+        install_verified(source, temporary, final_path)
+        _emit_phase(on_phase, active_phase, "succeeded")
+        active_phase = None
+    except BaseException as exc:
+        if (
+            backup_path is not None
+            and backup_staged
+            and not installation_completed(source, temporary, final_path)
+        ):
+            discard_staged_backup(backup_path)
+        if active_phase is not None:
+            state = (
+                "cancelled"
+                if isinstance(exc, (KeyboardInterrupt, SystemExit, CancellationRequested))
+                else "failed"
+            )
+            with contextlib.suppress(Exception):
+                _emit_phase(on_phase, active_phase, state)
+        raise
+
+
 def transcode_one(
     abs_path: Path,
     root: Path,
@@ -435,7 +441,9 @@ def transcode_one(
     cover_image_path: Path | None = None,
     auto_cover_art: bool = True,
     overwrite_existing: bool = False,
-    on_progress: Callable[[str], None] | None = None,
+    on_progress: StructuredProgressCallback | None = None,
+    on_phase: PhaseCallback | None = None,
+    on_heartbeat: HeartbeatCallback | None = None,
     grain_routing: bool = True,
     grain_threshold: float = av1_backend.GRAIN_CPU_THRESHOLD,
 ) -> tuple[TranscodeResult, dict | None]:
@@ -456,10 +464,59 @@ def transcode_one(
     error."""
     rel = abs_path.relative_to(root)
     resolved_cover = cover_image_path or (find_sidecar_cover(abs_path) if auto_cover_art else None)
+    final_path = (
+        (output_dir / abs_path.name).with_suffix(".mkv")
+        if output_dir
+        else abs_path.with_suffix(".mkv")
+    )
+
+    if output_dir is not None and final_path.resolve(strict=False) == abs_path.resolve(
+        strict=False
+    ):
+        return (
+            TranscodeResult(
+                str(rel),
+                "error",
+                "--output-dir maps the converted file onto its own source; choose a "
+                "different directory",
+            ),
+            None,
+        )
+
+    destination_collision = path_exists(final_path) and final_path != abs_path
+    if destination_collision and (output_dir is None or not overwrite_existing):
+        return (
+            TranscodeResult(
+                str(rel),
+                "error",
+                f"destination already exists: {final_path} "
+                + (
+                    "(pass --overwrite-existing to replace it)"
+                    if output_dir is not None
+                    else "(in-place transcoding never overwrites a different existing file)"
+                ),
+            ),
+            None,
+        )
+    if execute and backup_dir is not None:
+        backup_path = Path(backup_dir) / rel
+        if path_exists(backup_path):
+            return (
+                TranscodeResult(
+                    str(rel),
+                    "error",
+                    f"backup already exists, refusing to overwrite: {backup_path}",
+                ),
+                None,
+            )
+
+    _emit_phase(on_phase, "probe", "started")
     try:
         probed = probe_file(abs_path)
     except Exception as exc:
+        _emit_phase(on_phase, "probe", "failed")
         return TranscodeResult(str(rel), "error", f"probe failed: {exc}"), None
+    _emit_phase(on_phase, "probe", "succeeded")
 
     video = probed.get("video")
     if video is None:
@@ -470,7 +527,14 @@ def transcode_one(
     if grain_routing and av1_backend.grain_routing_applies(
         backend_pref, video, gpu_index, nvencc_ok
     ):
-        grain = measure_grain(abs_path, probed["format"].get("duration"))
+        _emit_phase(on_phase, "measure-grain", "started")
+        try:
+            grain = measure_grain(abs_path, probed["format"].get("duration"))
+        except Exception as exc:
+            _emit_phase(on_phase, "measure-grain", "failed")
+            return TranscodeResult(str(rel), "error", f"grain measurement failed: {exc}"), probed
+        _emit_phase(on_phase, "measure-grain", "succeeded")
+    _emit_phase(on_phase, "select-backend", "started")
     try:
         backend = av1_backend.choose_backend(
             video,
@@ -482,28 +546,13 @@ def transcode_one(
         )
         engine = av1_backend.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
     except ValueError as exc:
+        _emit_phase(on_phase, "select-backend", "failed")
         return TranscodeResult(str(rel), "error", str(exc)), probed
+    _emit_phase(on_phase, "select-backend", "succeeded")
 
     hdr = colorinfo.is_hdr(video)
     preset = presets.select_preset(video["height"], profile, hdr)
     svt_implementation = detect_svt_implementation() if backend == "cpu" else None
-    final_path = (
-        (output_dir / abs_path.name).with_suffix(".mkv")
-        if output_dir
-        else abs_path.with_suffix(".mkv")
-    )
-
-    if output_dir is not None and final_path.exists() and not overwrite_existing:
-        return (
-            TranscodeResult(
-                str(rel),
-                "error",
-                f"destination already exists: {final_path} "
-                "(pass --overwrite-existing to replace it)",
-            ),
-            probed,
-        )
-
     if not execute:
         cmd = build_encode_command(
             abs_path,
@@ -548,8 +597,16 @@ def transcode_one(
     tmp_dir = output_dir if output_dir is not None else abs_path.parent
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_dir / f".{abs_path.stem}.transcode-tmp.mkv"
-    if tmp_path.exists():
-        tmp_path.unlink()
+    if path_exists(tmp_path):
+        return (
+            TranscodeResult(
+                str(rel),
+                "error",
+                f"temporary work file already exists: {tmp_path}; inspect or remove it "
+                "before retrying",
+            ),
+            probed,
+        )
 
     log_path = log_dir / rel.with_suffix(".log")
 
@@ -570,31 +627,81 @@ def transcode_one(
             cover_image_path=resolved_cover if engine == "ffmpeg" else None,
             svt_implementation=svt_implementation,
         )
-        returncode, tail = stream_process(
-            cmd, log_path, probed["format"].get("duration"), on_progress=on_progress
-        )
+        _emit_phase(on_phase, "encode", "started")
+        try:
+            returncode, tail = stream_process(
+                cmd,
+                log_path,
+                probed["format"].get("duration"),
+                on_progress=on_progress,
+                on_heartbeat=(lambda: on_heartbeat("encode")) if on_heartbeat else None,
+            )
+        except KeyboardInterrupt, SystemExit, CancellationRequested:
+            _emit_phase(on_phase, "encode", "cancelled")
+            raise
+        except Exception:
+            _emit_phase(on_phase, "encode", "failed")
+            raise
         if returncode != 0:
+            _emit_phase(on_phase, "encode", "failed")
             tmp_path.unlink(missing_ok=True)
             tool = "nvencc" if engine == "nvencc" else "ffmpeg"
             return (
                 TranscodeResult(str(rel), "error", f"{tool} failed ({returncode}): {tail[-1000:]}"),
                 probed,
             )
+        _emit_phase(on_phase, "encode", "succeeded")
 
         if engine == "nvencc" and resolved_cover is not None:
-            _attach_cover_remux(tmp_path, resolved_cover)
+            _emit_phase(on_phase, "cover", "started")
+            try:
+                _attach_cover_remux(
+                    tmp_path,
+                    resolved_cover,
+                    (lambda: on_heartbeat("cover")) if on_heartbeat else None,
+                )
+            except KeyboardInterrupt, SystemExit, CancellationRequested:
+                _emit_phase(on_phase, "cover", "cancelled")
+                raise
+            except Exception:
+                _emit_phase(on_phase, "cover", "failed")
+                raise
+            _emit_phase(on_phase, "cover", "succeeded")
 
-        _refresh_track_statistics(tmp_path)
-        ok, detail = verify_output(probed, tmp_path)
+        _emit_phase(on_phase, "statistics", "started")
+        try:
+            _refresh_track_statistics(
+                tmp_path,
+                (lambda: on_heartbeat("statistics")) if on_heartbeat else None,
+            )
+        except KeyboardInterrupt, SystemExit, CancellationRequested:
+            _emit_phase(on_phase, "statistics", "cancelled")
+            raise
+        except Exception:
+            _emit_phase(on_phase, "statistics", "failed")
+            raise
+        _emit_phase(on_phase, "statistics", "succeeded")
+
+        _emit_phase(on_phase, "verify", "started")
+        try:
+            ok, detail = verify_output(probed, tmp_path)
+        except KeyboardInterrupt, SystemExit, CancellationRequested:
+            _emit_phase(on_phase, "verify", "cancelled")
+            raise
+        except Exception:
+            _emit_phase(on_phase, "verify", "failed")
+            raise
         if not ok:
+            _emit_phase(on_phase, "verify", "failed")
             tmp_path.unlink(missing_ok=True)
             return TranscodeResult(str(rel), "error", f"verification failed: {detail}"), probed
+        _emit_phase(on_phase, "verify", "succeeded")
 
         if output_dir is not None:
             # Re-checked here (in addition to the early check above) in case
             # something created final_path during the encode itself -- a
             # multi-hour window is plenty of time for that race.
-            if final_path.exists() and not overwrite_existing:
+            if path_exists(final_path) and not overwrite_existing:
                 tmp_path.unlink(missing_ok=True)
                 return (
                     TranscodeResult(
@@ -606,27 +713,42 @@ def transcode_one(
                     probed,
                 )
             final_path.parent.mkdir(parents=True, exist_ok=True)
+            _emit_phase(on_phase, "commit", "started")
+            try:
+                if overwrite_existing:
+                    os.replace(tmp_path, final_path)
+                    fsync_directory(final_path.parent)
+                else:
+                    install_no_replace(tmp_path, final_path)
+            except KeyboardInterrupt, SystemExit, CancellationRequested:
+                _emit_phase(on_phase, "commit", "cancelled")
+                raise
+            except Exception:
+                _emit_phase(on_phase, "commit", "failed")
+                raise
+            _emit_phase(on_phase, "commit", "succeeded")
         else:
-            if backup_dir is not None:
-                backup_path = Path(backup_dir) / rel
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(abs_path), str(backup_path))
-            else:
-                abs_path.unlink()
-            # Checked only *after* the original is moved/deleted: in-place
-            # mode's final_path can legitimately equal abs_path itself (a
-            # same-extension source), so checking beforehand would always
-            # "collide" with the very file about to be replaced.
-            if final_path.exists():
-                raise RuntimeError(f"{final_path} already exists, refusing to overwrite")
-
-        shutil.move(str(tmp_path), str(final_path))
+            _commit_in_place(
+                abs_path,
+                tmp_path,
+                final_path,
+                backup_dir,
+                rel,
+                on_phase,
+            )
         label = f"{engine}/{backend}/{preset.name}"
         if svt_implementation is not None:
             label += f"/{svt_implementation.label}/crf{presets.svt_crf(preset, svt_implementation)}"
         if grain is not None:
             label += f" (grain={grain.score:.4f})"
         return TranscodeResult(str(rel), "changed", f"{label}: {detail}"), probed
+    except KeyboardInterrupt, SystemExit, CancellationRequested:
+        if path_exists(abs_path) or output_dir is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
+    except RecoveryRequired:
+        raise
     except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
+        if output_dir is not None or path_exists(abs_path):
+            tmp_path.unlink(missing_ok=True)
         return TranscodeResult(str(rel), "error", str(exc)), probed

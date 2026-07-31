@@ -1,5 +1,8 @@
 import argparse
 
+from psammophis.runtime.context import AppContext
+from psammophis.runtime.events import ItemCompleted, ItemStarted
+
 from .checks import all_checks
 from .report import exit_code, format_report
 
@@ -25,15 +28,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, context: AppContext | None = None) -> int:
     args = build_parser().parse_args(argv)
+    emitter = (
+        context.start_run(command="env-check", mode="read-only") if context is not None else None
+    )
     results = all_checks()
     if args.category:
         results = [r for r in results if r.category == args.category]
     if args.required_only:
         results = [r for r in results if r.required]
+    if emitter is not None:
+        for index, result in enumerate(results, start=1):
+            item = f"{result.category}/{result.name}"
+            emitter.emit(ItemStarted, item=item, index=index, total=len(results))
+            emitter.emit(
+                ItemCompleted,
+                item=item,
+                status="succeeded" if result.found else "failed" if result.required else "skipped",
+                detail=result.detail,
+            )
     print(format_report(results))
-    return exit_code(results)
+    code = exit_code(results)
+    if context is not None:
+        errors = sum(1 for result in results if result.required and not result.found)
+        context.record_outcome(errors=errors, status="failed" if code else "succeeded")
+    return code
 
 
 if __name__ == "__main__":

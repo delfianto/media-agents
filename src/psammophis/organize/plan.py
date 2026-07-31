@@ -1,9 +1,20 @@
-import shutil
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from psammophis.medialib import naming
 from psammophis.medialib.tmdb import TmdbClient, TmdbError
+from psammophis.runtime.filesystem import (
+    RecoveryRequired,
+    copy_to_temporary,
+    discard_staged_backup,
+    fsync_directory,
+    install_no_replace,
+    path_exists,
+    restore_from_backup,
+    stage_backup,
+)
+from psammophis.runtime.signals import CancellationRequested
 
 from . import matching
 from .config import Config
@@ -159,7 +170,7 @@ def build_episode_plan(cfg: Config, tmdb: TmdbClient, source: Path) -> Plan | Or
 def _next_backup(path: Path) -> Path:
     candidate = path.with_name(path.name + ".bak")
     counter = 1
-    while candidate.exists():
+    while path_exists(candidate):
         candidate = path.with_name(f"{path.name}.bak.{counter}")
         counter += 1
     return candidate
@@ -169,23 +180,95 @@ def execute_plan(
     plan: Plan, *, copy_instead_of_move: bool = False, overwrite: bool = False
 ) -> OrganizeResult:
     backup = None
-    if plan.video_path.exists():
+    destination_existed = path_exists(plan.video_path)
+    if destination_existed and plan.video_path.is_symlink():
+        return OrganizeResult(
+            plan.source,
+            "error",
+            f"destination is a symlink, refusing to replace it: {plan.video_path}",
+        )
+    if destination_existed and plan.source.samefile(plan.video_path):
+        return OrganizeResult(plan.source, "error", "source and destination are the same file")
+    if destination_existed:
         if not overwrite:
             return OrganizeResult(
                 plan.source, "error", f"destination already exists: {plan.video_path}"
             )
         backup = _next_backup(plan.video_path)
-        shutil.move(plan.video_path, backup)
 
     plan.video_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    backup_staged = False
     try:
-        if copy_instead_of_move:
-            shutil.copy2(plan.source, plan.video_path)
-        else:
-            shutil.move(plan.source, plan.video_path)
-    except OSError as exc:
+        temporary = copy_to_temporary(plan.source, plan.video_path)
         if backup is not None:
-            plan.video_path.unlink(missing_ok=True)
-            shutil.move(backup, plan.video_path)
-        return OrganizeResult(plan.source, "error", str(exc), backup=backup)
+            stage_backup(plan.video_path, backup)
+            backup_staged = True
+            os.replace(temporary, plan.video_path)
+            fsync_directory(plan.video_path.parent)
+        else:
+            install_no_replace(temporary, plan.video_path)
+        if not copy_instead_of_move:
+            plan.source.unlink()
+            fsync_directory(plan.source.parent)
+    except RecoveryRequired:
+        raise
+    except KeyboardInterrupt, SystemExit, CancellationRequested:
+        _rollback_incomplete_move(
+            source=plan.source,
+            destination=plan.video_path,
+            temporary=temporary,
+            destination_existed=destination_existed,
+            backup=backup,
+            backup_staged=backup_staged,
+        )
+        raise
+    except OSError as exc:
+        _rollback_incomplete_move(
+            source=plan.source,
+            destination=plan.video_path,
+            temporary=temporary,
+            destination_existed=destination_existed,
+            backup=backup,
+            backup_staged=backup_staged,
+        )
+        return OrganizeResult(
+            plan.source,
+            "error",
+            str(exc),
+            backup=backup if backup is not None and path_exists(backup) else None,
+        )
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return OrganizeResult(plan.source, "moved", "ok", destination=plan.video_path, backup=backup)
+
+
+def _rollback_incomplete_move(
+    *,
+    source: Path,
+    destination: Path,
+    temporary: Path | None,
+    destination_existed: bool,
+    backup: Path | None,
+    backup_staged: bool,
+) -> None:
+    try:
+        if not path_exists(source):
+            return
+        installed = temporary is not None and not path_exists(temporary)
+        if installed:
+            if destination_existed and backup is not None and backup_staged:
+                restore_from_backup(backup, destination)
+            elif not destination_existed:
+                destination.unlink(missing_ok=True)
+                fsync_directory(destination.parent)
+        if backup is not None and backup_staged and path_exists(backup):
+            discard_staged_backup(backup)
+    except RecoveryRequired:
+        raise
+    except OSError as exc:
+        recovery = f"; backup remains at {backup}" if backup is not None else ""
+        raise RecoveryRequired(
+            f"organize rollback failed: {exc}; source remains at {source}{recovery}"
+        ) from exc

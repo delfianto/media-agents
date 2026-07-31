@@ -30,8 +30,8 @@ count errors but may still exit 0 (documented in REFACTOR plan findings).
 - NVEncC version and encode samples under `baseline/progress/`.
 
 ## Cache/backup paths (from source; not modified on real media)
-- `.cache/transcode/originals` — AV1 backups
-- `.cache/transcode/logs` — AV1 encoder logs
+- `.cache/av1transcode/originals` — AV1 backups
+- `.cache/av1transcode/logs` — AV1 encoder logs
 - `.cache/trackstrip/originals` — track-strip backups
 - `.cache/trackstrip/scan.json` — track scan cache
 

@@ -1,7 +1,7 @@
 """Backend (`cpu`/`nvenc`) and encode-engine (`ffmpeg`/`nvencc`) selection for
 AV1 encoding -- shared by transcode's own `run`/`probe` and the read-only
 `analyze` skill, so both report and apply the exact same decision instead of
-two independently-drifting copies (see root AGENTS.md's `lib/medialib`
+two independently-drifting copies (see root AGENTS.md's `psammophis.medialib`
 section for the bug class this is meant to avoid).
 """
 

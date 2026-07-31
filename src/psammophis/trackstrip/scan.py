@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from psammophis.medialib.walk import walk_media_files
+from psammophis.runtime.filesystem import atomic_write_text
 
 DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".avi", ".ts", ".mov", ".wmv"})
 CACHE_VERSION = 1
@@ -94,22 +95,37 @@ def load_cache(cache_path):
 def save_cache(cache_path, data):
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = cache_path.with_suffix(".json.tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=1)
-    tmp.replace(cache_path)
+    atomic_write_text(cache_path, json.dumps(data, indent=1))
 
 
-def scan(root, cache_path, extensions=None, jobs=8, force=False, on_progress=None):
+def scan(
+    root,
+    cache_path,
+    extensions=None,
+    jobs=8,
+    force=False,
+    on_progress=None,
+    on_item=None,
+):
     """Scan root for media files, probing new/changed files and reusing the
     cache for unchanged ones (matched by size + mtime). Returns the updated
     cache dict (also written to cache_path).
     """
     root = Path(root)
-    cache = load_cache(cache_path)
-    files_cache = cache["files"]
-
+    resolved_root = root.expanduser().resolve(strict=False)
     all_files = list(walk_media_files(root, extensions or DEFAULT_EXTENSIONS))
+    resolved_cache = Path(cache_path).expanduser().resolve(strict=False)
+    if any(path.resolve(strict=False) == resolved_cache for path in all_files):
+        raise ValueError(f"scan cache path would overwrite a media input: {resolved_cache}")
+
+    cache = load_cache(cache_path)
+    cached_root = cache.get("root")
+    if (
+        cached_root is not None
+        and Path(cached_root).expanduser().resolve(strict=False) != resolved_root
+    ):
+        cache = {"version": CACHE_VERSION, "generated_at": None, "files": {}}
+    files_cache = cache["files"]
     seen_rel_paths = set()
     to_probe = []
 
@@ -151,11 +167,13 @@ def scan(root, cache_path, extensions=None, jobs=8, force=False, on_progress=Non
                     entry["error"] = str(exc)
                 files_cache[rel] = entry
                 done += 1
+                if on_item:
+                    on_item(done, total, rel, entry.get("error"))
                 if on_progress:
                     on_progress(done, total, rel)
 
     cache["generated_at"] = time.time()
-    cache["root"] = str(root)
+    cache["root"] = str(resolved_root)
     save_cache(cache_path, cache)
     return cache
 

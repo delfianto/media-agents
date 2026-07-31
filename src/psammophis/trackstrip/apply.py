@@ -7,16 +7,25 @@ Safety model:
   - Remuxing always writes to a temp file next to the original first.
   - The temp file is verified (has video+audio, duration matches, and
     decodes cleanly at both ends) before anything happens to the original.
-  - The original is moved into a backup directory (mirroring the library's
-    relative path layout) rather than deleted, unless the caller passes
-    backup_dir=None explicitly.
+  - A complete backup is staged while the original remains live, then the
+    verified output is atomically installed. The caller may explicitly pass
+    backup_dir=None to replace without retaining a backup.
 """
 
-import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from psammophis.medialib.walk import walk_media_files
+from psammophis.runtime.filesystem import (
+    RecoveryRequired,
+    discard_staged_backup,
+    install_verified,
+    installation_completed,
+    path_exists,
+    stage_backup,
+)
+from psammophis.runtime.signals import CancellationRequested
 
 from . import remux_ffmpeg, remux_mkv, track_policy
 from .scan import DEFAULT_EXTENSIONS, probe_file
@@ -142,8 +151,25 @@ class ApplyResult:
         self.detail = detail
 
 
+PhaseCallback = Callable[[str, str], None]
+HeartbeatCallback = Callable[[str], None]
+
+
+def _phase(callback: PhaseCallback | None, name: str, state: str) -> None:
+    if callback is not None:
+        callback(name, state)
+
+
 def _execute_backend_plan(
-    abs_path: Path, root: Path, backend, plan_result, backup_dir, execute: bool, preview_suffix: str
+    abs_path: Path,
+    root: Path,
+    backend,
+    plan_result,
+    backup_dir,
+    execute: bool,
+    preview_suffix: str,
+    on_phase: PhaseCallback | None = None,
+    on_heartbeat: HeartbeatCallback | None = None,
 ):
     """Shared plan-execution machinery for any backend exposing
     build_command(path, out_path, plan_result) and remux(path, out_path, plan_result):
@@ -160,44 +186,130 @@ def _execute_backend_plan(
         return ApplyResult(str(rel), "planned", " ".join(str(c) for c in cmd)), plan_result
 
     tmp_path = abs_path.with_name(f".{abs_path.stem}.trackstrip-tmp{abs_path.suffix}")
-    if tmp_path.exists():
-        tmp_path.unlink()
+    if path_exists(tmp_path):
+        return (
+            ApplyResult(
+                str(rel),
+                "error",
+                f"temporary work file already exists: {tmp_path}; inspect or remove it "
+                "before retrying",
+            ),
+            plan_result,
+        )
+    backup_path = Path(backup_dir) / rel if backup_dir is not None else None
+    if backup_path is not None and path_exists(backup_path):
+        return (
+            ApplyResult(
+                str(rel),
+                "error",
+                f"backup already exists, refusing to overwrite: {backup_path}",
+            ),
+            plan_result,
+        )
 
+    current_phase: str | None = None
+    backup_staged = False
     try:
+        current_phase = "probe"
+        _phase(on_phase, "probe", "started")
         original_probed = probe_file(abs_path)
-        backend.remux(abs_path, tmp_path, plan_result)
+        _phase(on_phase, "probe", "succeeded")
+        current_phase = "remux"
+        _phase(on_phase, "remux", "started")
+        backend.remux(
+            abs_path,
+            tmp_path,
+            plan_result,
+            on_heartbeat=(lambda: on_heartbeat("remux")) if on_heartbeat else None,
+        )
+        _phase(on_phase, "remux", "succeeded")
+        current_phase = "verify"
+        _phase(on_phase, "verify", "started")
         ok, detail = verify_output(original_probed, tmp_path)
         if not ok:
+            _phase(on_phase, "verify", "failed")
             tmp_path.unlink(missing_ok=True)
             return ApplyResult(str(rel), "error", f"verification failed: {detail}"), plan_result
+        _phase(on_phase, "verify", "succeeded")
 
         if backup_dir is not None:
-            backup_path = Path(backup_dir) / rel
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(abs_path), str(backup_path))
-        else:
-            abs_path.unlink()
-
-        shutil.move(str(tmp_path), str(abs_path))
+            current_phase = "backup"
+            _phase(on_phase, "backup", "started")
+            assert backup_path is not None
+            stage_backup(abs_path, backup_path)
+            backup_staged = True
+            _phase(on_phase, "backup", "succeeded")
+        current_phase = "commit"
+        _phase(on_phase, "commit", "started")
+        install_verified(abs_path, tmp_path, abs_path)
+        _phase(on_phase, "commit", "succeeded")
+        current_phase = None
         return ApplyResult(str(rel), "changed", detail), plan_result
+    except KeyboardInterrupt, SystemExit, CancellationRequested:
+        if (
+            backup_path is not None
+            and backup_staged
+            and not installation_completed(abs_path, tmp_path, abs_path)
+        ):
+            discard_staged_backup(backup_path)
+        if current_phase is not None:
+            _phase(on_phase, current_phase, "cancelled")
+        if path_exists(abs_path):
+            tmp_path.unlink(missing_ok=True)
+        raise
+    except RecoveryRequired:
+        raise
     except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
+        if (
+            backup_path is not None
+            and backup_staged
+            and not installation_completed(abs_path, tmp_path, abs_path)
+        ):
+            discard_staged_backup(backup_path)
+        if current_phase is not None:
+            _phase(on_phase, current_phase, "failed")
+        if path_exists(abs_path):
+            tmp_path.unlink(missing_ok=True)
         return ApplyResult(str(rel), "error", str(exc)), plan_result
 
 
-def apply_one(abs_path: Path, root: Path, policy: track_policy.Policy, backup_dir, execute: bool):
+def apply_one(
+    abs_path: Path,
+    root: Path,
+    policy: track_policy.Policy,
+    backup_dir,
+    execute: bool,
+    on_phase: PhaseCallback | None = None,
+    on_heartbeat: HeartbeatCallback | None = None,
+):
     backend = get_backend(abs_path)
     try:
         plan_result = backend.plan(abs_path, policy)
     except Exception as exc:
         return ApplyResult(str(abs_path.relative_to(root)), "error", f"probe failed: {exc}"), None
     return _execute_backend_plan(
-        abs_path, root, backend, plan_result, backup_dir, execute, ".stripped"
+        abs_path,
+        root,
+        backend,
+        plan_result,
+        backup_dir,
+        execute,
+        ".stripped",
+        on_phase,
+        on_heartbeat,
     )
 
 
 def transcode_one(
-    abs_path: Path, root: Path, from_codecs, to_codec, bitrate, backup_dir, execute: bool
+    abs_path: Path,
+    root: Path,
+    from_codecs,
+    to_codec,
+    bitrate,
+    backup_dir,
+    execute: bool,
+    on_phase: PhaseCallback | None = None,
+    on_heartbeat: HeartbeatCallback | None = None,
 ):
     from . import transcode as transcode_mod
 
@@ -206,5 +318,13 @@ def transcode_one(
     except Exception as exc:
         return ApplyResult(str(abs_path.relative_to(root)), "error", f"probe failed: {exc}"), None
     return _execute_backend_plan(
-        abs_path, root, transcode_mod, plan_result, backup_dir, execute, ".transcoded"
+        abs_path,
+        root,
+        transcode_mod,
+        plan_result,
+        backup_dir,
+        execute,
+        ".transcoded",
+        on_phase,
+        on_heartbeat,
     )

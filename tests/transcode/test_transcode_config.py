@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from psammophis.transcode import config
 
 # parse_dotenv itself is tested once, centrally, in lib/test_dotenv.py --
@@ -24,10 +26,10 @@ def test_load_config_defaults_with_no_env_file(tmp_path):
 def test_load_config_reads_values_from_dotenv(tmp_path):
     env_path = _write_env(
         tmp_path,
-        "AV1TRANSCODE_OUTPUT_DIR=/converted\n"
-        "AV1TRANSCODE_AUDIO_LANG=jpn\n"
-        "AV1TRANSCODE_SUBTITLE_LANG=all\n"
-        "AV1TRANSCODE_MAX_BITRATE_FRACTION=0.5\n",
+        "TRANSCODE_OUTPUT_DIR=/converted\n"
+        "TRANSCODE_AUDIO_LANG=jpn\n"
+        "TRANSCODE_SUBTITLE_LANG=all\n"
+        "TRANSCODE_MAX_BITRATE_FRACTION=0.5\n",
     )
     cfg = config.load_config(env_path)
     assert str(cfg.output_dir) == "/converted"
@@ -37,7 +39,14 @@ def test_load_config_reads_values_from_dotenv(tmp_path):
 
 
 def test_real_environment_overrides_dotenv_file(tmp_path, monkeypatch):
-    env_path = _write_env(tmp_path, "AV1TRANSCODE_AUDIO_LANG=jpn\n")
-    monkeypatch.setenv("AV1TRANSCODE_AUDIO_LANG", "spa")
+    env_path = _write_env(tmp_path, "TRANSCODE_AUDIO_LANG=jpn\n")
+    monkeypatch.setenv("TRANSCODE_AUDIO_LANG", "spa")
     cfg = config.load_config(env_path)
     assert cfg.audio_lang == "spa"
+
+
+@pytest.mark.parametrize("value", ["nope", "0", "-0.5", "1.1"])
+def test_invalid_bitrate_fraction_is_rejected(tmp_path, value):
+    env_path = _write_env(tmp_path, f"TRANSCODE_MAX_BITRATE_FRACTION={value}\n")
+    with pytest.raises(config.ConfigError, match="TRANSCODE_MAX_BITRATE_FRACTION"):
+        config.load_config(env_path)

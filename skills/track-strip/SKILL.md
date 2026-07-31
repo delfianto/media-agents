@@ -10,7 +10,7 @@ metadata:
 
 # track-strip
 
-This Plex library (`Movies/` and `TV Shows/`) is inspected and maintained by a zero-dependency Python toolkit at `src/psammophis/trackstrip/` (next to this file). It wraps `ffprobe`, `ffmpeg`, and `mkvmerge`. Track selection (`apply`) never re-encodes - it only remuxes (stream-copies) files to add/remove tracks. `transcode` is the one exception: it re-encodes only the audio streams that need it (video is always stream-copied), used when a codec itself is the problem (e.g. DTS not decoding over eARC on some LG TVs) rather than the track's language.
+This Plex library (`Movies/` and `TV Shows/`) is inspected and maintained by the packaged application under `src/psammophis/trackstrip/`. It wraps `ffprobe`, `ffmpeg`, and `mkvmerge`. Track selection (`apply`) never re-encodes - it only remuxes (stream-copies) files to add/remove tracks. `transcode` is the one exception: it re-encodes only the audio streams that need it (video is always stream-copied), used when a codec itself is the problem (e.g. DTS not decoding over eARC on some LG TVs) rather than the track's language.
 
 See `reference/incidents.md` for the full incident history (real bugs found auditing this exact library, and the fixes) behind every safety rule below - read it before changing verification/fallback logic in `src/psammophis/trackstrip/`, since several of these were subtle enough to ship once already.
 
@@ -134,7 +134,7 @@ For multi-hour encodes or large batch mutations, prefer JSONL progress so the
 session can be observed without ANSI noise:
 
 ```bash
-.agents/run.sh --reporter jsonl --progress-interval 30 transcode run ... --yes
+.agents/run.sh --reporter jsonl --progress-interval 30 track-strip apply ... --yes
 ```
 
 - Continue observing the **same** process/session; do not relaunch an encode

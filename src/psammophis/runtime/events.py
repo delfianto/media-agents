@@ -7,11 +7,12 @@ durable journal are separate consumers. Schema starts at 1.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
-from uuid import uuid4
+from uuid import uuid7
 
 SCHEMA_VERSION = 1
 
@@ -23,7 +24,7 @@ PhaseStatus = Literal["succeeded", "failed", "cancelled"]
 
 def new_run_id() -> str:
     """Sortable unique run ID (time-based UUID string)."""
-    return str(uuid4())
+    return str(uuid7())
 
 
 def utc_now() -> str:
@@ -95,6 +96,7 @@ class ItemStarted(Event):
     item: str | None = None
     index: int | None = None
     total: int | None = None
+    log_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +176,37 @@ class NullSink:
         return None
 
 
+class GuardedSink:
+    """Disable a presentation sink after its first failure.
+
+    Reporter rendering is observability, not part of a media transaction. A
+    broken terminal or renderer must not interrupt verification or land in
+    the tiny post-commit window where an operation already succeeded on disk.
+    Durable journal sinks are intentionally *not* guarded and continue to
+    fail closed.
+    """
+
+    def __init__(self, sink: EventSink) -> None:
+        self.sink = sink
+        self.error: Exception | None = None
+
+    def emit(self, event: Event) -> None:
+        if self.error is not None:
+            return
+        try:
+            self.sink.emit(event)
+        except Exception as exc:
+            self.error = exc
+
+    def close(self) -> None:
+        if self.error is not None:
+            return
+        try:
+            self.sink.close()
+        except Exception as exc:
+            self.error = exc
+
+
 class CompositeSink:
     def __init__(self, sinks: Sequence[EventSink]) -> None:
         self._sinks = list(sinks)
@@ -210,13 +243,20 @@ class EventEmitter:
         self.run_id = run_id
         self.command = command
         self._seq = SequenceCounter()
+        self._lock = threading.Lock()
 
     def emit(self, event_cls: type[Event], **kwargs: Any) -> Event:
-        event = event_cls(
-            run_id=self.run_id,
-            seq=self._seq.next(),
-            command=self.command,
-            **kwargs,
-        )
-        self.sink.emit(event)
+        with self._lock:
+            event = event_cls(
+                run_id=self.run_id,
+                seq=self._seq.next(),
+                command=self.command,
+                **kwargs,
+            )
+            self.sink.emit(event)
         return event
+
+    def replace_sink(self, sink: EventSink) -> None:
+        """Change consumers without resetting the event sequence."""
+        with self._lock:
+            self.sink = sink

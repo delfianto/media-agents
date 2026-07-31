@@ -31,3 +31,8 @@ def test_runs_list_show_events(tmp_path, capsys):
 
 def test_runs_unknown(tmp_path):
     assert runs_main(["--state-dir", str(tmp_path), "show", "missing"]) == 1
+
+
+def test_runs_rejects_path_traversal(tmp_path, capsys):
+    assert runs_main(["--state-dir", str(tmp_path), "show", "../outside"]) == 2
+    assert "invalid run ID" in capsys.readouterr().err

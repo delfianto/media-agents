@@ -5,6 +5,7 @@
 
 set -euo pipefail
 
+launcher_caller_pwd=$PWD
 launcher_path=${BASH_SOURCE[0]}
 if [[ $launcher_path != /* ]]; then
     launcher_path=$PWD/$launcher_path
@@ -24,6 +25,7 @@ if [[ -f $envrc ]]; then
     # shellcheck source=/dev/null
     source "$envrc"
     ((allexport_was_set)) || set +a
+    cd -L -- "$launcher_caller_pwd"
 fi
 
 if [[ -z ${MEDIALIB_ROOT:-} ]]; then

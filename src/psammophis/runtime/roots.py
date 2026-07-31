@@ -3,7 +3,7 @@
 Precedence for root-oriented commands:
 
 1. Explicit command ``--root`` (handled by the feature CLI after parse)
-2. Feature-specific root environment variable (``AV1TRANSCODE_ROOT``,
+2. Feature-specific root environment variable (``TRANSCODE_ROOT``,
    ``TRACKSTRIP_ROOT``, …)
 3. ``MEDIALIB_ROOT``
 4. The invocation working directory
@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Roots that must never be used as a mutation target. Extend carefully;
 # each entry needs a focused rejection test.
-_DANGEROUS_ROOTS = frozenset({Path("/")})
+_DANGEROUS_ROOTS = frozenset({Path("/"), Path.home().resolve()})
 
 
 class RootError(ValueError):
@@ -45,7 +45,7 @@ def resolve_default_root(
     """Resolve the default library root before argparse runs.
 
     ``feature_env`` is the name of an optional feature-specific override
-    such as ``AV1TRANSCODE_ROOT`` or ``TRACKSTRIP_ROOT``. Explicit
+    such as ``TRANSCODE_ROOT`` or ``TRACKSTRIP_ROOT``. Explicit
     ``--root`` is applied later by argparse defaults/overrides.
     """
     env = os.environ if environ is None else environ
@@ -84,4 +84,49 @@ def validate_root(
             f"refusing to operate on dangerously broad root {resolved}; "
             "pass a media library directory explicitly"
         )
+    return resolved
+
+
+def root_option_source(argv: list[str], default: ResolvedRoot) -> str:
+    """Report whether argparse's root came from an explicit CLI option."""
+    if any(token == "--root" or token.startswith("--root=") for token in argv):
+        return "--root"
+    return default.source
+
+
+def validate_deletion_target(
+    target: Path | str,
+    *,
+    media_root: Path | str | None = None,
+) -> Path:
+    """Reject broad, mounted, symlinked, or library-containing purge targets."""
+    raw = Path(target).expanduser()
+    absolute = raw if raw.is_absolute() else Path.cwd() / raw
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise RootError(f"refusing to recursively delete through symlink: {current}")
+    resolved = raw.resolve(strict=False)
+    anchor = Path(resolved.anchor)
+    if resolved in _DANGEROUS_ROOTS or resolved.parent == anchor or resolved.is_mount():
+        raise RootError(f"refusing to recursively delete dangerously broad path: {resolved}")
+    if media_root is not None:
+        library = Path(media_root).expanduser().resolve(strict=False)
+        if library in _DANGEROUS_ROOTS:
+            raise RootError(f"invalid dangerously broad media root: {library}")
+        if resolved == library or resolved in library.parents:
+            raise RootError(f"refusing to delete the media root or one of its parents: {resolved}")
+        protected = (library / ".cache" / "psammophis", library / ".agents")
+        for protected_path in protected:
+            if (
+                resolved == protected_path
+                or resolved in protected_path.parents
+                or protected_path in resolved.parents
+            ):
+                raise RootError(
+                    f"refusing to delete protected application state or its parent: {resolved}"
+                )
+    if resolved.exists() and not resolved.is_dir():
+        raise RootError(f"deletion target is not a directory: {resolved}")
     return resolved

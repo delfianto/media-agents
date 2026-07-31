@@ -42,6 +42,21 @@ def test_av1_run_empty_selection_exits_zero(tmp_path):
     assert code == 0
 
 
+def test_purge_refuses_missing_media_root(tmp_path):
+    missing = tmp_path / "unmounted-library"
+    code = transcode_cli.main(
+        [
+            "--root",
+            str(missing),
+            "purge-backups",
+            "--backup-dir",
+            str(tmp_path / "some-backup"),
+            "--yes",
+        ]
+    )
+    assert code == 2
+
+
 def test_envcheck_returns_int():
     code = envcheck_cli.main([])
     assert isinstance(code, int)

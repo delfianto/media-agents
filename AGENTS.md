@@ -15,7 +15,7 @@ uv.lock                locked application + dev dependencies
 run.sh                 checkout launcher (also via .agents/run.sh)
 src/psammophis/        application package
   cli.py               top-level dispatcher + global options
-  runtime/             events, journal, reporters, process supervisor, roots
+  runtime/             events, journal, reporters, process/filesystem safety, roots
   medialib/            shared media helpers (walk, dotenv, presets, …)
   analyze/ artwork/ transcode/ envcheck/ mkvedit/
   organize/ compare/ subtitle/ trackstrip/
@@ -46,8 +46,8 @@ uv run psammophis <command> ...
 python -m psammophis <command> ...
 ```
 
-Public commands: `analyze`, `artwork`, `transcode`, `env-check`, `mkvedit`,
-`organize`, `compare`, `runs`, `subtitle`, `track-strip`.
+Public commands: `analyze`, `artwork`, `compare`, `env-check`, `mkvedit`,
+`organize`, `runs`, `subtitle`, `track-strip`, `transcode`.
 
 `run.sh` sources `.envrc` (if present), sets `MEDIALIB_ROOT` when appropriate,
 and `exec`s `uv run --project <repo> psammophis "$@"`. It does not construct
@@ -64,7 +64,7 @@ Library-root resolution no longer walks ancestors for a directory named
 `.agents` inside Python. Prefer:
 
 1. Explicit `--root`
-2. Feature env (`AV1TRANSCODE_ROOT`, `TRACKSTRIP_ROOT`, …)
+2. Feature env (`TRANSCODE_ROOT`, `TRACKSTRIP_ROOT`, …)
 3. `MEDIALIB_ROOT` (set by `run.sh` when appropriate)
 4. Invocation cwd
 
@@ -73,7 +73,8 @@ Library-root resolution no longer walks ancestors for a directory named
 - Progress/diagnostics go to **stderr**; command results stay on **stdout**.
 - Reporters: `--reporter auto|tty|plain|jsonl|quiet`
 - Durable journals (applied work): `<root>/.cache/psammophis/runs/<run-id>/`
-- Legacy backups/caches stay at `.cache/transcode/` and `.cache/trackstrip/`
+- Transcode backups/logs live at `.cache/transcode/`. Track-strip state stays
+  at `.cache/trackstrip/`.
 - Inspect runs: `psammophis runs list|show|events`
 
 For long encodes, skills should use JSONL, keep observing the same process, and

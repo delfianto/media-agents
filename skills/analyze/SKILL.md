@@ -12,7 +12,7 @@ metadata:
 
 `transcode probe` already previews which preset and backend it would pick, but that decision was, until now, opaque on one specific axis: how much of a role a source's actual grain/noise level should play in the cpu-vs-nvenc choice. This skill exists to make that (and the rest of the decision) fully visible on its own, without needing to invoke `transcode` itself -- point it at a file or a `--path` filter and it reports the exact same facts `transcode`'s own heuristics would act on: resolution tier, dynamic range, the resolved preset's concrete encoder settings for both backends, a measured grain/noise score, and the resulting backend/engine decision with the reasoning spelled out.
 
-The toolkit lives at `src/psammophis/analyze/` (next to this file), a thin, zero-third-party-dependency Python package. It does no encoding decision-making of its own -- every fact it reports comes from `psammophis.medialib` (`videoprobe`, `colorinfo`, `av1_presets`, `av1_backend`, `grain`), the exact same modules `transcode` itself imports, so this skill's report and `transcode`'s actual behavior can never independently drift out of sync (see root `AGENTS.md`'s `psammophis.medialib` section for why that matters).
+The implementation lives at `src/psammophis/analyze/` inside the packaged application. It does no encoding decision-making of its own -- every fact it reports comes from `psammophis.medialib` (`videoprobe`, `colorinfo`, `av1_presets`, `av1_backend`, `grain`), the exact same modules `transcode` itself imports, so this skill's report and `transcode`'s actual behavior cannot independently drift out of sync (see root `AGENTS.md`'s `psammophis.medialib` section for why that matters).
 
 ## Running it
 

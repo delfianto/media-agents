@@ -3,7 +3,17 @@ from __future__ import annotations
 import json
 import os
 
-from psammophis.runtime.events import EventEmitter, RunCompleted, RunStarted
+from psammophis.runtime import journal as journal_mod
+from psammophis.runtime.events import (
+    EventEmitter,
+    ItemCompleted,
+    ItemProgress,
+    ItemStarted,
+    PhaseCompleted,
+    PhaseStarted,
+    RunCompleted,
+    RunStarted,
+)
 from psammophis.runtime.journal import (
     JournalSink,
     annotate_stale,
@@ -55,3 +65,36 @@ def test_stale_detection_for_dead_pid(tmp_path):
     }
     annotated = annotate_stale(status)
     assert annotated["state"] == "stale"
+
+
+def test_status_tracks_live_item_counts_and_clears_completed_phase(tmp_path):
+    paths = journal_paths(tmp_path / "state", "run-live")
+    sink = JournalSink(paths, command="x", run_id="run-live", pid=os.getpid())
+    emitter = EventEmitter(sink, "run-live", "x")
+    emitter.emit(RunStarted, items_total=1)
+    emitter.emit(ItemStarted, item="movie.mkv", index=1, total=1, log_path="movie.log")
+    emitter.emit(PhaseStarted, phase="encode", item="movie.mkv")
+    emitter.emit(ItemProgress, item="movie.mkv", phase="encode", percent=25.0)
+    emitter.emit(PhaseCompleted, phase="encode", item="movie.mkv", status="succeeded")
+    emitter.emit(ItemCompleted, item="movie.mkv", status="succeeded")
+
+    status = read_status(paths.status_path)
+    assert status["items_total"] == 1
+    assert status["raw_log_path"] == "movie.log"
+    assert status["counts"]["items_succeeded"] == 1
+    assert status["current_item"] is None
+    assert status["current_phase"] is None
+
+
+def test_stale_detection_rejects_reused_pid(monkeypatch):
+    monkeypatch.setattr(journal_mod, "is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(journal_mod, "process_start_token", lambda _pid: "new-process")
+    status = {
+        "state": "running",
+        "pid": os.getpid(),
+        "hostname": __import__("socket").gethostname(),
+        "process_start_token": "old-process",
+    }
+    annotated = annotate_stale(status)
+    assert annotated["state"] == "stale"
+    assert "reused" in annotated["stale_reason"]

@@ -6,8 +6,8 @@ executes anything, only reports what transcode's own heuristics would do.
 
 import argparse
 import json
+import math
 import sys
-from pathlib import Path
 
 from psammophis.medialib import av1_backend
 from psammophis.medialib import av1_presets as presets
@@ -16,11 +16,28 @@ from psammophis.medialib.grain import GRAIN_CPU_THRESHOLD, measure_grain
 from psammophis.medialib.svt import detect_svt_implementation
 from psammophis.medialib.videoprobe import probe_file
 from psammophis.medialib.walk import walk_media_files
-from psammophis.runtime.roots import resolve_default_root
+from psammophis.runtime.context import AppContext
+from psammophis.runtime.events import ItemCompleted, ItemStarted, PhaseCompleted, PhaseStarted
+from psammophis.runtime.roots import (
+    RootError,
+    resolve_default_root,
+    root_option_source,
+    validate_root,
+)
 
 from .report import analysis_to_dict, build_analysis, format_analysis
 
 DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".ts", ".mov"})
+
+
+def _grain_threshold(value: str) -> float:
+    try:
+        threshold = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a number") from exc
+    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise argparse.ArgumentTypeError("must be a finite number from 0 through 1")
+    return threshold
 
 
 def build_parser(default_root: str) -> argparse.ArgumentParser:
@@ -45,7 +62,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--grain-threshold",
-        type=float,
+        type=_grain_threshold,
         default=GRAIN_CPU_THRESHOLD,
         help=f"Grain/noise score at or above which the backend decision prefers cpu over "
         f"nvenc (default: {GRAIN_CPU_THRESHOLD} -- see medialib.grain for how it's measured "
@@ -63,10 +80,30 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    default_root = str(resolve_default_root().path)
-    args = build_parser(default_root).parse_args(argv)
-    root = Path(args.root)
+def main(argv: list[str] | None = None, context: AppContext | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    default = resolve_default_root()
+    args = build_parser(str(default.path)).parse_args(raw)
+    try:
+        root = validate_root(args.root)
+    except RootError as exc:
+        print(f"Invalid media root: {exc}", file=sys.stderr)
+        return 2
+
+    candidates = list(
+        walk_media_files(root, DEFAULT_EXTENSIONS, path_filter=args.path, limit=args.limit)
+    )
+    emitter = (
+        context.start_run(
+            command="analyze",
+            root=root,
+            root_source=root_option_source(raw, default),
+            mode="read-only",
+            items_total=len(candidates),
+        )
+        if context is not None
+        else None
+    )
 
     gpu_index = detect_av1_nvenc_gpu()
     nvencc_ok = av1_backend.nvencc_available()
@@ -74,26 +111,76 @@ def main(argv: list[str] | None = None) -> int:
 
     results = []
     errors = 0
-    for abs_path in walk_media_files(
-        root, DEFAULT_EXTENSIONS, path_filter=args.path, limit=args.limit
-    ):
+    for index, abs_path in enumerate(candidates, start=1):
         rel = abs_path.relative_to(root)
+        if emitter is not None:
+            emitter.emit(ItemStarted, item=str(rel), index=index, total=len(candidates))
+            emitter.emit(PhaseStarted, phase="probe", item=str(rel))
         try:
             probed = probe_file(abs_path)
         except Exception as exc:
             errors += 1
-            print(f"  [ERROR] {rel}: {exc}", file=sys.stderr)
+            if emitter is not None:
+                emitter.emit(PhaseCompleted, phase="probe", item=str(rel), status="failed")
+                if context is not None:
+                    context.message(str(exc), level="error", item=str(rel), phase="probe")
+                emitter.emit(ItemCompleted, item=str(rel), status="failed", detail=str(exc))
+            else:
+                print(f"  [ERROR] {rel}: {exc}", file=sys.stderr)
             continue
+        if emitter is not None:
+            emitter.emit(PhaseCompleted, phase="probe", item=str(rel), status="succeeded")
         if probed.get("video") is None:
             errors += 1
-            print(f"  [ERROR] {rel}: no video stream found", file=sys.stderr)
+            detail = "no video stream found"
+            if emitter is not None:
+                if context is not None:
+                    context.message(detail, level="error", item=str(rel))
+                emitter.emit(ItemCompleted, item=str(rel), status="failed", detail=detail)
+            else:
+                print(f"  [ERROR] {rel}: {detail}", file=sys.stderr)
             continue
 
         grain = None
         if not args.no_grain_routing and av1_backend.grain_routing_applies(
             "auto", probed["video"], gpu_index, nvencc_ok
         ):
-            grain = measure_grain(abs_path, probed["format"].get("duration"))
+            if emitter is not None:
+                emitter.emit(PhaseStarted, phase="measure-grain", item=str(rel))
+            try:
+                grain = measure_grain(abs_path, probed["format"].get("duration"))
+            except Exception as exc:
+                errors += 1
+                if emitter is not None:
+                    emitter.emit(
+                        PhaseCompleted,
+                        phase="measure-grain",
+                        item=str(rel),
+                        status="failed",
+                    )
+                    if context is not None:
+                        context.message(
+                            str(exc),
+                            level="error",
+                            item=str(rel),
+                            phase="measure-grain",
+                        )
+                    emitter.emit(
+                        ItemCompleted,
+                        item=str(rel),
+                        status="failed",
+                        detail=str(exc),
+                    )
+                else:
+                    print(f"  [ERROR] {rel}: {exc}", file=sys.stderr)
+                continue
+            if emitter is not None:
+                emitter.emit(
+                    PhaseCompleted,
+                    phase="measure-grain",
+                    item=str(rel),
+                    status="succeeded",
+                )
 
         analysis = build_analysis(
             str(rel),
@@ -109,9 +196,16 @@ def main(argv: list[str] | None = None) -> int:
         if not args.json:
             print(format_analysis(analysis))
             print()
+        if emitter is not None:
+            emitter.emit(ItemCompleted, item=str(rel), status="succeeded")
 
     if args.json:
         print(json.dumps([analysis_to_dict(a) for a in results], indent=2))
+    if context is not None:
+        context.record_outcome(
+            errors=errors,
+            status="partial" if errors and results else ("failed" if errors else "succeeded"),
+        )
     return 1 if errors else 0
 
 

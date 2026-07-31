@@ -1,9 +1,23 @@
 import argparse
 import json
+import math
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+from psammophis.runtime.context import AppContext
+from psammophis.runtime.events import (
+    ItemCompleted,
+    ItemProgress,
+    ItemStarted,
+    PhaseCompleted,
+    PhaseStarted,
+    RunHeartbeat,
+)
+from psammophis.runtime.filesystem import atomic_write_text
+from psammophis.runtime.signals import CancellationRequested
 
 from .image import IMAGE_EXTENSIONS, compare_images, format_image_report
 from .metrics import (
@@ -66,6 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _positive(name: str, value: int | float) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{name} must be finite")
     if value <= 0:
         raise ValueError(f"{name} must be positive")
 
@@ -97,10 +113,53 @@ def _ssimulacra_selection(args: argparse.Namespace) -> tuple[str | None, str]:
     return binary, "available"
 
 
-def main(argv: list[str] | None = None) -> int:
+def _validate_json_destination(
+    destination: Path | None,
+    reference: Path,
+    distorted: Path,
+) -> None:
+    if destination is None:
+        return
+    resolved = destination.expanduser().resolve(strict=False)
+    if resolved in (reference, distorted):
+        raise ValueError("--json-out must not overwrite either media input")
+
+
+def main(argv: list[str] | None = None, context: AppContext | None = None) -> int:
     args = build_parser().parse_args(argv)
     reference_path = Path(args.reference).expanduser().resolve()
     distorted_path = Path(args.distorted).expanduser().resolve()
+    json_out = args.json_out.expanduser().resolve(strict=False) if args.json_out else None
+    item_name = f"{reference_path.name} vs {distorted_path.name}"
+    emitter = (
+        context.start_run(
+            command="compare",
+            root=reference_path,
+            root_source="--reference",
+            mode="read-only",
+            items_total=1,
+            wants_journal=True,
+            use_root_for_state=False,
+        )
+        if context is not None
+        else None
+    )
+    if emitter is not None:
+        emitter.emit(ItemStarted, item=item_name, index=1, total=1)
+        emitter.emit(PhaseStarted, phase="preflight", item=item_name)
+    preflight_started = time.monotonic()
+    active_phase: str | None = "preflight"
+    active_phase_started = preflight_started
+
+    def emit_heartbeat(phase: str) -> None:
+        if emitter is not None:
+            emitter.emit(
+                RunHeartbeat,
+                phase=phase,
+                item=item_name,
+                message="still running",
+            )
+
     try:
         if not reference_path.is_file():
             raise ValueError(f"reference is not a file: {reference_path}")
@@ -108,9 +167,24 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"distorted input is not a file: {distorted_path}")
         if reference_path.samefile(distorted_path):
             raise ValueError("reference and distorted inputs are the same file")
+        _validate_json_destination(json_out, reference_path, distorted_path)
         media_type = _media_type(args, reference_path, distorted_path)
         binary, initial_ssim_status = _ssimulacra_selection(args)
+        if emitter is not None:
+            emitter.emit(
+                PhaseCompleted,
+                phase="preflight",
+                item=item_name,
+                status="succeeded",
+                elapsed_seconds=time.monotonic() - preflight_started,
+            )
+        active_phase = None
         if media_type == "image":
+            if emitter is not None:
+                emitter.emit(PhaseStarted, phase="compare-image", item=item_name)
+            phase_started = time.monotonic()
+            active_phase = "compare-image"
+            active_phase_started = phase_started
             with tempfile.TemporaryDirectory(prefix="compare-image-") as temp_name:
                 result = compare_images(
                     reference_path,
@@ -118,22 +192,48 @@ def main(argv: list[str] | None = None) -> int:
                     Path(temp_name),
                     binary,
                     initial_ssim_status,
+                    on_heartbeat=(lambda: emit_heartbeat("compare-image")),
                 )
             encoded = json.dumps(result, indent=2)
-            if args.json_out:
-                args.json_out.parent.mkdir(parents=True, exist_ok=True)
-                args.json_out.write_text(encoded + "\n")
+            if json_out:
+                json_out.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_text(json_out, encoded + "\n")
             print(encoded if args.json else format_image_report(result))
-            if args.json_out and not args.json:
-                print(f"\nFull JSON: {args.json_out}")
+            if json_out and not args.json:
+                print(f"\nFull JSON: {json_out}")
+            if emitter is not None:
+                emitter.emit(
+                    PhaseCompleted,
+                    phase="compare-image",
+                    item=item_name,
+                    status="succeeded",
+                    elapsed_seconds=time.monotonic() - phase_started,
+                )
+                emitter.emit(ItemCompleted, item=item_name, status="succeeded")
+            active_phase = None
+            if context is not None:
+                context.record_outcome(status="succeeded")
             return 0
 
+        if emitter is not None:
+            emitter.emit(PhaseStarted, phase="probe", item=item_name)
+        active_phase = "probe"
+        active_phase_started = time.monotonic()
         check_libvmaf()
         reference = probe_video(reference_path)
         distorted = probe_video(distorted_path)
         alignment_errors = validate_alignment(reference, distorted)
         if alignment_errors:
             raise ValueError("alignment preflight failed:\n  - " + "\n  - ".join(alignment_errors))
+        if emitter is not None:
+            emitter.emit(
+                PhaseCompleted,
+                phase="probe",
+                item=item_name,
+                status="succeeded",
+                elapsed_seconds=time.monotonic() - active_phase_started,
+            )
+        active_phase = None
 
         workload = WORKLOADS[args.mode]
         clips = args.clips if args.clips is not None else workload.clips
@@ -146,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             else workload.ssimulacra_frames
         )
         _positive("clips", clips)
+        _positive("threads", args.threads)
         if not workload.full or args.clip_duration is not None:
             _positive("clip duration", clip_duration)
         if ssim_count < 0:
@@ -157,12 +258,17 @@ def main(argv: list[str] | None = None) -> int:
         ssimulacra_frames: list[dict[str, float]] = []
         with tempfile.TemporaryDirectory(prefix="compare-") as temp_name:
             temp = Path(temp_name)
+            total_steps = len(ranges) + (ssim_count if binary else 0)
+            completed_steps = 0
+            if emitter is not None:
+                emitter.emit(PhaseStarted, phase="vmaf", item=item_name)
+            vmaf_started = time.monotonic()
+            active_phase = "vmaf"
+            active_phase_started = vmaf_started
             for index, (start, duration) in enumerate(ranges, start=1):
-                print(
-                    f"[VMAF {index}/{len(ranges)}] {start:.2f}s for {duration:.2f}s",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                progress_text = f"VMAF {index}/{len(ranges)} at {start:.2f}s"
+                if context is None:
+                    print(f"[{progress_text}]", file=sys.stderr, flush=True)
                 frames = run_vmaf_clip(
                     reference_path,
                     distorted_path,
@@ -172,26 +278,85 @@ def main(argv: list[str] | None = None) -> int:
                     args.threads,
                     temp / f"vmaf-{index:03d}.json",
                     reference.frame_rate,
+                    on_heartbeat=(lambda: emit_heartbeat("vmaf")) if emitter is not None else None,
                 )
                 vmaf_frames.extend(frames)
+                completed_steps += 1
+                if emitter is not None:
+                    emitter.emit(
+                        ItemProgress,
+                        item=item_name,
+                        phase="vmaf",
+                        percent=(completed_steps / total_steps * 100.0) if total_steps else 100.0,
+                    )
+            if emitter is not None:
+                emitter.emit(
+                    PhaseCompleted,
+                    phase="vmaf",
+                    item=item_name,
+                    status="succeeded",
+                    elapsed_seconds=time.monotonic() - vmaf_started,
+                )
+            active_phase = None
             if binary and ssim_count:
+                if emitter is not None:
+                    emitter.emit(PhaseStarted, phase="ssimulacra2", item=item_name)
+                ssim_started = time.monotonic()
+                active_phase = "ssimulacra2"
+                active_phase_started = ssim_started
                 timestamps = stratified_timestamps(common_duration, ssim_count, margin=0.5)
                 for index, timestamp in enumerate(timestamps, start=1):
-                    print(
-                        f"[SSIMULACRA2 {index}/{len(timestamps)}] {timestamp:.2f}s",
-                        file=sys.stderr,
-                        flush=True,
-                    )
+                    progress_text = f"SSIMULACRA2 {index}/{len(timestamps)} at {timestamp:.2f}s"
+                    if context is None:
+                        print(f"[{progress_text}]", file=sys.stderr, flush=True)
                     reference_png = temp / f"reference-{index:03d}.png"
                     distorted_png = temp / f"distorted-{index:03d}.png"
-                    extract_frame(reference_path, timestamp, reference_png, reference)
-                    extract_frame(distorted_path, timestamp, distorted_png, distorted)
+
+                    def heartbeat() -> None:
+                        emit_heartbeat("ssimulacra2")
+
+                    extract_frame(
+                        reference_path,
+                        timestamp,
+                        reference_png,
+                        reference,
+                        on_heartbeat=heartbeat,
+                    )
+                    extract_frame(
+                        distorted_path,
+                        timestamp,
+                        distorted_png,
+                        distorted,
+                        on_heartbeat=heartbeat,
+                    )
                     ssimulacra_frames.append(
                         {
                             "timestamp": timestamp,
-                            "ssimulacra2": run_ssimulacra2(binary, reference_png, distorted_png),
+                            "ssimulacra2": run_ssimulacra2(
+                                binary,
+                                reference_png,
+                                distorted_png,
+                                on_heartbeat=heartbeat,
+                            ),
                         }
                     )
+                    completed_steps += 1
+                    if emitter is not None:
+                        emitter.emit(
+                            ItemProgress,
+                            item=item_name,
+                            phase="ssimulacra2",
+                            percent=(completed_steps / total_steps * 100.0),
+                        )
+                if emitter is not None:
+                    emitter.emit(
+                        PhaseCompleted,
+                        phase="ssimulacra2",
+                        item=item_name,
+                        status="succeeded",
+                        elapsed_seconds=time.monotonic() - ssim_started,
+                    )
+                active_phase = None
 
         if ssim_count == 0 and binary:
             ssim_status = "zero samples requested"
@@ -210,15 +375,45 @@ def main(argv: list[str] | None = None) -> int:
             ssim_status,
         )
         encoded = json.dumps(result, indent=2)
-        if args.json_out:
-            args.json_out.parent.mkdir(parents=True, exist_ok=True)
-            args.json_out.write_text(encoded + "\n")
+        if json_out:
+            json_out.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(json_out, encoded + "\n")
         print(encoded if args.json else format_report(result))
-        if args.json_out and not args.json:
-            print(f"\nFull JSON: {args.json_out}")
+        if json_out and not args.json:
+            print(f"\nFull JSON: {json_out}")
+    except KeyboardInterrupt, CancellationRequested:
+        if emitter is not None:
+            if active_phase is not None:
+                emitter.emit(
+                    PhaseCompleted,
+                    phase=active_phase,
+                    item=item_name,
+                    status="cancelled",
+                    elapsed_seconds=time.monotonic() - active_phase_started,
+                )
+            emitter.emit(ItemCompleted, item=item_name, status="cancelled")
+        raise
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
+        if context is not None:
+            context.message(str(exc), level="error", item=item_name)
+            context.record_outcome(status="failed", errors=1)
+        else:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+        if emitter is not None:
+            if active_phase is not None:
+                emitter.emit(
+                    PhaseCompleted,
+                    phase=active_phase,
+                    item=item_name,
+                    status="failed",
+                    elapsed_seconds=time.monotonic() - active_phase_started,
+                )
+            emitter.emit(ItemCompleted, item=item_name, status="failed", detail=str(exc))
         return 1
+    if emitter is not None:
+        emitter.emit(ItemCompleted, item=item_name, status="succeeded")
+    if context is not None:
+        context.record_outcome(status="succeeded")
     return 0
 
 

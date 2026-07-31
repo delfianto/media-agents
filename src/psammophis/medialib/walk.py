@@ -7,7 +7,7 @@ it's walking gets picked up as a "new" input file in the very same
 invocation. `exclude_dirs` prunes such subtrees (given as resolved absolute
 paths) before the walk ever reaches them -- needed whenever a plain
 (non-dot-prefixed) output/backup/log directory points inside the tree being
-walked. Confirmed for real: an transcode `--output-dir transcode` run
+walked. Confirmed for real: an AV1 transcode `--output-dir transcode` run
 inside its own `--root` produced a doubly-compressed
 `transcode/transcode/...` copy of the very file `transcode/...` had just
 finished writing (see skills/transcode/reference/incidents.md). That fix

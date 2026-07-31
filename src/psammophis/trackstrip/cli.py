@@ -1,14 +1,42 @@
 import argparse
 import shutil
 import sys
+import time
 from pathlib import Path
 
-from psammophis.runtime.roots import resolve_default_root
+from psammophis.runtime.context import AppContext
+from psammophis.runtime.events import (
+    ItemCompleted,
+    ItemProgress,
+    ItemStarted,
+    PhaseCompleted,
+    PhaseStarted,
+    RunHeartbeat,
+)
+from psammophis.runtime.filesystem import RecoveryRequired
+from psammophis.runtime.roots import (
+    RootError,
+    resolve_default_root,
+    root_option_source,
+    validate_deletion_target,
+    validate_root,
+)
+from psammophis.runtime.signals import CancellationRequested
 
 from . import apply as apply_mod
 from . import langs, track_policy
 from . import scan as scan_mod
 from . import stats as stats_mod
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
 
 
 def _policy_from_args(args):
@@ -71,20 +99,75 @@ def add_policy_args(p):
 
 
 def cmd_scan(args):
+    context: AppContext | None = getattr(args, "_context", None)
+    emitter = (
+        context.start_run(
+            command="track-strip scan",
+            root=args.root,
+            root_source=getattr(args, "_root_source", None),
+            mode="state-write",
+            wants_journal=True,
+        )
+        if context is not None
+        else None
+    )
+    started = time.monotonic()
+    if emitter is not None:
+        emitter.emit(PhaseStarted, phase="scan")
+
+    def progress(done, total, rel):
+        if emitter is None and total:
+            scan_mod._default_progress(done, total, rel)
+
+    def item_finished(done, total, rel, error):
+        if emitter is None:
+            return
+        emitter.emit(ItemStarted, item=rel, index=done, total=total)
+        emitter.emit(
+            ItemProgress,
+            item=rel,
+            phase="scan",
+            percent=100.0,
+        )
+        emitter.emit(
+            ItemCompleted,
+            item=rel,
+            status="failed" if error else "succeeded",
+            detail=error,
+        )
+
     cache = scan_mod.scan(
         args.root,
         args.cache,
         jobs=args.jobs,
         force=args.force,
-        on_progress=scan_mod._default_progress,
+        on_progress=progress,
+        on_item=item_finished,
     )
     n = len(cache["files"])
     errors = sum(1 for e in cache["files"].values() if "error" in e)
     print(f"Scanned {n} files ({errors} errors). Cache: {args.cache}")
+    if emitter is not None:
+        emitter.emit(
+            PhaseCompleted,
+            phase="scan",
+            status="failed" if errors else "succeeded",
+            elapsed_seconds=time.monotonic() - started,
+        )
+    if context is not None:
+        context.record_outcome(errors=errors, status="failed" if errors else "succeeded")
     return 1 if errors else 0
 
 
 def cmd_stats(args):
+    context: AppContext | None = getattr(args, "_context", None)
+    if context is not None:
+        context.start_run(
+            command="track-strip stats",
+            root=args.root,
+            root_source=getattr(args, "_root_source", None),
+            mode="read-only",
+        )
     cache = scan_mod.load_cache(args.cache)
     if not cache["files"]:
         print("No cache found -- run `scan` first.", file=sys.stderr)
@@ -113,6 +196,14 @@ def _print_plan_line(rel, plan_result):
 
 
 def cmd_plan(args):
+    context: AppContext | None = getattr(args, "_context", None)
+    if context is not None:
+        context.start_run(
+            command="track-strip plan",
+            root=args.root,
+            root_source=getattr(args, "_root_source", None),
+            mode="dry-run",
+        )
     cache = scan_mod.load_cache(args.cache)
     if not cache["files"]:
         print("No cache found -- run `scan` first.", file=sys.stderr)
@@ -147,20 +238,79 @@ def cmd_apply(args):
         else (args.backup_dir or str(root / ".cache" / "trackstrip" / "originals"))
     )
 
-    if args.yes and backup_dir is None:
-        print(
-            "!! Running with --yes --no-backup: "
-            "originals will be permanently deleted, not backed up."
-        )
-
     exclude_dirs = frozenset({Path(backup_dir).resolve()}) if backup_dir else frozenset()
 
     candidates = list(apply_mod.iter_target_files(root, args.path, args.limit, exclude_dirs))
-    changed = unchanged = errors = planned = 0
-    for abs_path in candidates:
-        result, plan_result = apply_mod.apply_one(
-            abs_path, root, policy, backup_dir, execute=args.yes
+    context: AppContext | None = getattr(args, "_context", None)
+    emitter = (
+        context.start_run(
+            command="track-strip apply",
+            root=root,
+            root_source=getattr(args, "_root_source", None),
+            mode="applied" if args.yes else "dry-run",
+            items_total=len(candidates),
+            wants_journal=args.yes,
         )
+        if context is not None
+        else None
+    )
+    if args.yes and backup_dir is None:
+        warning = "Originals will be permanently replaced without backups."
+        if context is not None:
+            context.message(warning, level="warning")
+        else:
+            print(f"!! {warning}", file=sys.stderr)
+
+    changed = unchanged = errors = planned = 0
+    for index, abs_path in enumerate(candidates, start=1):
+        rel = str(abs_path.relative_to(root))
+        if emitter is not None:
+            emitter.emit(ItemStarted, item=rel, index=index, total=len(candidates))
+        phase_times: dict[str, float] = {}
+
+        def on_phase(
+            phase: str,
+            state: str,
+            _phase_times: dict[str, float] = phase_times,
+            _rel: str = rel,
+        ) -> None:
+            if emitter is None:
+                return
+            if state == "started":
+                _phase_times[phase] = time.monotonic()
+                emitter.emit(PhaseStarted, phase=phase, item=_rel)
+            else:
+                started = _phase_times.pop(phase, None)
+                emitter.emit(
+                    PhaseCompleted,
+                    phase=phase,
+                    item=_rel,
+                    status=state if state in ("failed", "cancelled") else "succeeded",
+                    elapsed_seconds=time.monotonic() - started if started is not None else None,
+                )
+
+        def on_heartbeat(phase: str, _rel: str = rel) -> None:
+            if emitter is not None:
+                emitter.emit(RunHeartbeat, phase=phase, item=_rel, message="still running")
+
+        try:
+            result, plan_result = apply_mod.apply_one(
+                abs_path,
+                root,
+                policy,
+                backup_dir,
+                execute=args.yes,
+                on_phase=on_phase,
+                on_heartbeat=on_heartbeat if args.yes else None,
+            )
+        except KeyboardInterrupt, CancellationRequested:
+            if emitter is not None:
+                emitter.emit(ItemCompleted, item=rel, status="cancelled")
+            raise
+        except RecoveryRequired as exc:
+            if emitter is not None:
+                emitter.emit(ItemCompleted, item=rel, status="failed", detail=str(exc))
+            raise
         if result.status == "unchanged":
             unchanged += 1
         elif result.status == "planned":
@@ -172,12 +322,37 @@ def cmd_apply(args):
             print(f"  [OK] {result.rel}  ({result.detail})")
         elif result.status == "error":
             errors += 1
-            print(f"  [ERROR] {result.rel}: {result.detail}", file=sys.stderr)
+            if context is not None:
+                context.message(result.detail, level="error", item=rel)
+            else:
+                print(f"  [ERROR] {result.rel}: {result.detail}", file=sys.stderr)
+        if emitter is not None:
+            item_status = {
+                "changed": "succeeded",
+                "planned": "skipped",
+                "unchanged": "skipped",
+                "error": "failed",
+            }[result.status]
+            emitter.emit(
+                ItemCompleted,
+                item=rel,
+                status=item_status,
+                detail=result.detail or None,
+            )
 
     mode = "APPLIED" if args.yes else "DRY RUN (pass --yes to execute for real)"
     print(f"\n[{mode}] changed={changed} planned={planned} unchanged={unchanged} errors={errors}")
     if args.yes and backup_dir and changed:
-        print(f"Originals of changed files were moved under: {backup_dir}")
+        print(f"Backups of changed files were retained under: {backup_dir}")
+    if context is not None:
+        context.record_outcome(
+            status="succeeded"
+            if not errors
+            else ("partial" if changed or planned or unchanged else "failed"),
+            changed=changed,
+            planned=planned,
+            errors=errors,
+        )
     return 1 if errors else 0
 
 
@@ -190,20 +365,81 @@ def cmd_transcode(args):
         else (args.backup_dir or str(root / ".cache" / "trackstrip" / "originals"))
     )
 
-    if args.yes and backup_dir is None:
-        print(
-            "!! Running with --yes --no-backup: "
-            "originals will be permanently deleted, not backed up."
-        )
-
     exclude_dirs = frozenset({Path(backup_dir).resolve()}) if backup_dir else frozenset()
 
     candidates = list(apply_mod.iter_target_files(root, args.path, args.limit, exclude_dirs))
-    changed = unchanged = errors = planned = 0
-    for abs_path in candidates:
-        result, plan_result = apply_mod.transcode_one(
-            abs_path, root, from_codecs, args.to_codec, args.bitrate, backup_dir, execute=args.yes
+    context: AppContext | None = getattr(args, "_context", None)
+    emitter = (
+        context.start_run(
+            command="track-strip transcode",
+            root=root,
+            root_source=getattr(args, "_root_source", None),
+            mode="applied" if args.yes else "dry-run",
+            items_total=len(candidates),
+            wants_journal=args.yes,
         )
+        if context is not None
+        else None
+    )
+    if args.yes and backup_dir is None:
+        warning = "Originals will be permanently replaced without backups."
+        if context is not None:
+            context.message(warning, level="warning")
+        else:
+            print(f"!! {warning}", file=sys.stderr)
+
+    changed = unchanged = errors = planned = 0
+    for index, abs_path in enumerate(candidates, start=1):
+        rel = str(abs_path.relative_to(root))
+        if emitter is not None:
+            emitter.emit(ItemStarted, item=rel, index=index, total=len(candidates))
+        phase_times: dict[str, float] = {}
+
+        def on_phase(
+            phase: str,
+            state: str,
+            _phase_times: dict[str, float] = phase_times,
+            _rel: str = rel,
+        ) -> None:
+            if emitter is None:
+                return
+            if state == "started":
+                _phase_times[phase] = time.monotonic()
+                emitter.emit(PhaseStarted, phase=phase, item=_rel)
+            else:
+                started = _phase_times.pop(phase, None)
+                emitter.emit(
+                    PhaseCompleted,
+                    phase=phase,
+                    item=_rel,
+                    status=state if state in ("failed", "cancelled") else "succeeded",
+                    elapsed_seconds=time.monotonic() - started if started is not None else None,
+                )
+
+        def on_heartbeat(phase: str, _rel: str = rel) -> None:
+            if emitter is not None:
+                emitter.emit(RunHeartbeat, phase=phase, item=_rel, message="still running")
+
+        try:
+            result, plan_result = apply_mod.transcode_one(
+                abs_path,
+                root,
+                from_codecs,
+                args.to_codec,
+                args.bitrate,
+                backup_dir,
+                execute=args.yes,
+                on_phase=on_phase,
+                on_heartbeat=on_heartbeat if args.yes else None,
+            )
+        except KeyboardInterrupt, CancellationRequested:
+            if emitter is not None:
+                emitter.emit(ItemCompleted, item=rel, status="cancelled")
+            raise
+        except RecoveryRequired as exc:
+            if emitter is not None:
+                emitter.emit(ItemCompleted, item=rel, status="failed", detail=str(exc))
+            raise
         if result.status == "unchanged":
             unchanged += 1
         elif result.status == "planned":
@@ -221,29 +457,74 @@ def cmd_transcode(args):
             print(f"  [OK] {result.rel}  ({result.detail})")
         elif result.status == "error":
             errors += 1
-            print(f"  [ERROR] {result.rel}: {result.detail}", file=sys.stderr)
+            if context is not None:
+                context.message(result.detail, level="error", item=rel)
+            else:
+                print(f"  [ERROR] {result.rel}: {result.detail}", file=sys.stderr)
+        if emitter is not None:
+            item_status = {
+                "changed": "succeeded",
+                "planned": "skipped",
+                "unchanged": "skipped",
+                "error": "failed",
+            }[result.status]
+            emitter.emit(
+                ItemCompleted,
+                item=rel,
+                status=item_status,
+                detail=result.detail or None,
+            )
 
     mode = "APPLIED" if args.yes else "DRY RUN (pass --yes to execute for real)"
     print(f"\n[{mode}] changed={changed} planned={planned} unchanged={unchanged} errors={errors}")
     if args.yes and backup_dir and changed:
-        print(f"Originals of changed files were moved under: {backup_dir}")
+        print(f"Backups of changed files were retained under: {backup_dir}")
+    if context is not None:
+        context.record_outcome(
+            status="succeeded"
+            if not errors
+            else ("partial" if changed or planned or unchanged else "failed"),
+            changed=changed,
+            planned=planned,
+            errors=errors,
+        )
     return 1 if errors else 0
 
 
 def cmd_purge_backups(args):
-    backup_dir = Path(args.backup_dir)
+    root = Path(args.root)
+    context: AppContext | None = getattr(args, "_context", None)
+    try:
+        backup_dir = validate_deletion_target(args.backup_dir, media_root=root)
+    except RootError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        if context is not None:
+            context.record_outcome(status="failed", errors=1)
+        return 2
+    if context is not None:
+        context.start_run(
+            command="track-strip purge-backups",
+            root=root,
+            root_source=getattr(args, "_root_source", None),
+            mode="applied" if args.yes else "dry-run",
+            items_total=1,
+            wants_journal=args.yes,
+        )
     if not backup_dir.exists():
         print(f"No backup directory at {backup_dir}, nothing to purge.")
-        return
+        return 0
     size = sum(f.stat().st_size for f in backup_dir.rglob("*") if f.is_file())
     if not args.yes:
         print(
             f"Would permanently delete {backup_dir} ({stats_mod.human_size(size)}). "
             "Re-run with --yes to confirm."
         )
-        return
+        return 0
     shutil.rmtree(backup_dir)
     print(f"Deleted {backup_dir} ({stats_mod.human_size(size)} freed).")
+    if context is not None:
+        context.record_outcome(changed=1)
+    return 0
 
 
 def build_parser(default_root, default_cache):
@@ -256,7 +537,12 @@ def build_parser(default_root, default_cache):
     sub = p.add_subparsers(dest="command", required=True)
 
     sp = sub.add_parser("scan", help="Probe all media files with ffprobe and update the cache")
-    sp.add_argument("--jobs", type=int, default=8, help="Parallel ffprobe workers (default 8)")
+    sp.add_argument(
+        "--jobs",
+        type=_positive_int,
+        default=8,
+        help="Parallel ffprobe workers (default 8)",
+    )
     sp.add_argument(
         "--force", action="store_true", help="Re-probe every file, ignoring cache freshness"
     )
@@ -286,7 +572,9 @@ def build_parser(default_root, default_cache):
         "--yes", action="store_true", help="Actually execute the remux (default is a live dry run)"
     )
     sp.add_argument(
-        "--no-backup", action="store_true", help="Delete originals instead of backing them up"
+        "--no-backup",
+        action="store_true",
+        help="Replace originals without retaining backups",
     )
     sp.add_argument(
         "--backup-dir",
@@ -317,10 +605,13 @@ def build_parser(default_root, default_cache):
         help="Actually execute the transcode (default is a live dry run)",
     )
     sp.add_argument(
-        "--no-backup", action="store_true", help="Delete originals instead of backing them up"
+        "--no-backup",
+        action="store_true",
+        help="Replace originals without retaining backups",
     )
     sp.add_argument(
-        "--backup-dir", help="Where to move originals (default: <root>/.cache/trackstrip/originals)"
+        "--backup-dir",
+        help="Where to retain originals as backups (default: <root>/.cache/trackstrip/originals)",
     )
     sp.set_defaults(func=cmd_transcode)
 
@@ -334,11 +625,21 @@ def build_parser(default_root, default_cache):
     return p
 
 
-def main(argv=None, context=None) -> int:
-    default_root = str(resolve_default_root(feature_env="TRACKSTRIP_ROOT").path)
-    default_cache = str(Path(default_root) / ".cache" / "trackstrip" / "scan.json")
+def main(argv=None, context: AppContext | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    default = resolve_default_root(feature_env="TRACKSTRIP_ROOT")
+    default_root = str(default.path)
+    default_cache = str(default.path / ".cache" / "trackstrip" / "scan.json")
     parser = build_parser(default_root, default_cache)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
+    if args.command in ("scan", "apply", "transcode", "purge-backups"):
+        try:
+            root = validate_root(args.root)
+        except RootError as exc:
+            print(f"Invalid media root: {exc}", file=sys.stderr)
+            return 2
+        args.root = str(root)
+    args._root_source = root_option_source(raw, default)
     if args.command == "purge-backups" and args.backup_dir is None:
         args.backup_dir = str(Path(args.root) / ".cache" / "trackstrip" / "originals")
     args._context = context

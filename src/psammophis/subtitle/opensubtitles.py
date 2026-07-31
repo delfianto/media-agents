@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from psammophis.runtime.filesystem import atomic_write_bytes
+
 BASE_URL = "https://api.opensubtitles.com/api/v1"
 
 
@@ -72,8 +74,9 @@ class OpenSubtitlesClient:
             raise OpenSubtitlesError(
                 f"OpenSubtitles {path} failed ({exc.code}): {detail[:300]}"
             ) from exc
-        except urllib.error.URLError as exc:
-            raise OpenSubtitlesError(f"OpenSubtitles {path} failed: {exc.reason}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise OpenSubtitlesError(f"OpenSubtitles {path} failed: {reason}") from exc
 
     def login(self) -> None:
         """No-op (stays on the anonymous 5/day/IP quota) if no
@@ -123,6 +126,16 @@ class OpenSubtitlesClient:
         if not link:
             raise OpenSubtitlesError(f"no download link returned for file_id={file_id}")
         req = urllib.request.Request(link, headers={"User-Agent": self.user_agent})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            Path(dest).write_bytes(resp.read())
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                atomic_write_bytes(Path(dest), resp.read())
+        except urllib.error.HTTPError as exc:
+            raise OpenSubtitlesError(
+                f"subtitle download failed ({exc.code}) for file_id={file_id}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise OpenSubtitlesError(
+                f"subtitle download failed for file_id={file_id}: {reason}"
+            ) from exc
         return str(info.get("file_name", ""))

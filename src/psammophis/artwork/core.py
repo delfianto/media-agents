@@ -5,6 +5,7 @@ from typing import Protocol
 
 from psammophis.medialib import naming
 from psammophis.medialib.tmdb import TmdbClient
+from psammophis.runtime.filesystem import atomic_write_text
 
 from . import nfo
 
@@ -195,7 +196,7 @@ def execute(writes: list[Write], tmdb: TmdbClient) -> list[str]:
     for write in writes:
         write.destination.parent.mkdir(parents=True, exist_ok=True)
         if write.content is not None:
-            write.destination.write_text(write.content, encoding="utf-8")
+            atomic_write_text(write.destination, write.content)
         elif write.image_path and not tmdb.download_image(write.image_path, write.destination):
             warnings.append(f"{write.kind} download failed: {write.destination}")
     return warnings

@@ -8,6 +8,9 @@ no re-encoding and no manual stream-copy mapping is needed.
 
 import json
 import subprocess
+from collections.abc import Callable
+
+from psammophis.runtime.process import ProcessSupervisor
 
 from . import track_policy
 
@@ -55,12 +58,15 @@ def build_command(path, out_path, plan_result):
     return cmd
 
 
-def remux(path, out_path, plan_result):
+def remux(
+    path,
+    out_path,
+    plan_result,
+    on_heartbeat: Callable[[], None] | None = None,
+):
     cmd = build_command(path, out_path, plan_result)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    result = ProcessSupervisor(cmd, on_heartbeat=on_heartbeat).run()
     # mkvmerge exit codes: 0 = ok, 1 = ok with warnings, 2 = error (aborted).
-    if proc.returncode >= 2:
-        raise RuntimeError(
-            f"mkvmerge remux failed ({proc.returncode}): {proc.stdout.strip()[-2000:]}"
-        )
-    return cmd, proc.stdout
+    if result.returncode >= 2:
+        raise RuntimeError(f"mkvmerge remux failed ({result.returncode}): {result.tail[-2000:]}")
+    return cmd, result.tail

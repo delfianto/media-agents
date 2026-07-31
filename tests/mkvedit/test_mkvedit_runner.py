@@ -75,3 +75,19 @@ def test_validation_failure_restores_original(tmp_path):
     assert result.status == "error"
     assert "restored" in result.detail
     assert path.read_bytes() == b"original"
+
+
+def test_in_place_edit_refuses_symlink_source(tmp_path):
+    target = tmp_path / "external.mkv"
+    path = tmp_path / "movie.mkv"
+    target.write_bytes(b"external")
+    path.symlink_to(target)
+    fake = FakeRun()
+
+    result = apply(path, Edits(title="New"), yes=True, run=fake)
+
+    assert result.status == "error"
+    assert "symlink" in result.detail
+    assert fake.calls == []
+    assert path.is_symlink()
+    assert target.read_bytes() == b"external"

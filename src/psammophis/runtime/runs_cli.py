@@ -8,6 +8,7 @@ import os
 import sys
 from pathlib import Path
 
+from .context import AppContext
 from .journal import (
     annotate_stale,
     default_state_root,
@@ -18,7 +19,7 @@ from .journal import (
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(default_state_dir: Path | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="psammophis runs",
         description="Inspect durable Psammophis run journals (read-only).",
@@ -26,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-dir",
         type=Path,
-        default=None,
+        default=default_state_dir,
         help="Psammophis state directory (default: <root>/.cache/psammophis)",
     )
     parser.add_argument(
@@ -62,8 +63,12 @@ def _state_root(args: argparse.Namespace) -> Path:
     return root
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def _valid_run_id(run_id: str) -> bool:
+    return bool(run_id) and run_id not in (".", "..") and Path(run_id).name == run_id
+
+
+def main(argv: list[str] | None = None, context: AppContext | None = None) -> int:
+    args = build_parser(context.state_dir if context is not None else None).parse_args(argv)
     try:
         state_root = _state_root(args)
     except SystemExit as exc:
@@ -71,6 +76,15 @@ def main(argv: list[str] | None = None) -> int:
             print(exc.code, file=sys.stderr)
             return 2
         raise
+
+    if context is not None:
+        context.start_run(
+            command=f"runs {args.command}",
+            root=state_root,
+            root_source="--state-dir" if args.state_dir is not None else "runtime context",
+            mode="read-only",
+            use_root_for_state=False,
+        )
 
     if args.command == "list":
         runs = [annotate_stale(r) for r in list_runs(state_root)]
@@ -88,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
         return 0
 
+    if not _valid_run_id(args.run_id):
+        print(f"invalid run ID: {args.run_id!r}", file=sys.stderr)
+        return 2
     paths = journal_paths(state_root, args.run_id)
     if not paths.status_path.is_file():
         print(f"unknown run: {args.run_id}", file=sys.stderr)

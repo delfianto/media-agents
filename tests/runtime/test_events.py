@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
 
 from psammophis.runtime.events import (
     SCHEMA_VERSION,
     CompositeSink,
     EventEmitter,
     ItemProgress,
+    Message,
     NullSink,
     RunCompleted,
     RunStarted,
@@ -35,6 +37,11 @@ def test_sequence_counter_monotonic():
 
 def test_run_id_unique():
     assert new_run_id() != new_run_id()
+
+
+def test_run_ids_sort_in_creation_order():
+    run_ids = [new_run_id() for _ in range(20)]
+    assert run_ids == sorted(run_ids)
 
 
 def test_serialization_omits_none_and_has_envelope():
@@ -80,3 +87,20 @@ def test_composite_and_null():
     assert a.events == [event]
     assert b.events == [event]
     NullSink().emit(event)
+
+
+def test_emitter_serializes_events_from_multiple_threads():
+    sink = CollectSink()
+    emitter = EventEmitter(sink, "run-threaded", "x")
+
+    def emit_batch(worker: int) -> None:
+        for index in range(20):
+            emitter.emit(Message, text=f"{worker}:{index}")
+
+    threads = [threading.Thread(target=emit_batch, args=(worker,)) for worker in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert [event.seq for event in sink.events] == list(range(1, 101))

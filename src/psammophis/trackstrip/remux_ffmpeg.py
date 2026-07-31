@@ -4,7 +4,9 @@ Uses `-map`/`-c copy` to remux without re-encoding: video and kept audio/
 subtitle streams are copied bit-for-bit, only the track list changes.
 """
 
-import subprocess
+from collections.abc import Callable
+
+from psammophis.runtime.process import ProcessSupervisor
 
 from . import track_policy
 from .scan import probe_file
@@ -46,11 +48,14 @@ def build_command(path, out_path, plan_result):
     return cmd
 
 
-def remux(path, out_path, plan_result):
+def remux(
+    path,
+    out_path,
+    plan_result,
+    on_heartbeat: Callable[[], None] | None = None,
+):
     cmd = build_command(path, out_path, plan_result)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"ffmpeg remux failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
-        )
-    return cmd, proc.stderr
+    result = ProcessSupervisor(cmd, on_heartbeat=on_heartbeat).run()
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg remux failed ({result.returncode}): {result.tail[-2000:]}")
+    return cmd, result.tail

@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from psammophis.runtime.filesystem import atomic_write_bytes
+
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_BASE_URL = "https://image.tmdb.org/t/p"
 
@@ -40,8 +42,9 @@ class TmdbClient:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")
             raise TmdbError(f"TMDB {path} failed ({exc.code}): {detail[:300]}") from exc
-        except urllib.error.URLError as exc:
-            raise TmdbError(f"TMDB {path} failed: {exc.reason}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise TmdbError(f"TMDB {path} failed: {reason}") from exc
 
     def search_movie(self, query: str, year: int | None = None) -> list[dict]:
         data = self._get("/search/movie", query=query, year=year)
@@ -76,7 +79,7 @@ class TmdbClient:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = resp.read()
-        except urllib.error.HTTPError, urllib.error.URLError:
+        except urllib.error.HTTPError, urllib.error.URLError, TimeoutError:
             return False
-        Path(dest).write_bytes(data)
+        atomic_write_bytes(Path(dest), data)
         return True

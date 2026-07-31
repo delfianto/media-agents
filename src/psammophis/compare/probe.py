@@ -1,4 +1,5 @@
 import json
+import math
 import subprocess
 from dataclasses import asdict, dataclass
 from fractions import Fraction
@@ -33,9 +34,10 @@ def _to_float(value: object) -> float | None:
     if value in {None, "", "N/A", "0/0"}:
         return None
     try:
-        return float(str(value))
+        parsed = float(str(value))
     except TypeError, ValueError:
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _to_int(value: object) -> int | None:

@@ -1,6 +1,6 @@
 """Shared `.env`-style KEY=VALUE parsing. Stdlib only -- this format is
 small enough that pulling in python-dotenv as a dependency isn't worth it.
-Each skill's own config.py still owns its `AV1TRANSCODE_`/`ORGANIZE_`
+Each skill's own config.py still owns its `TRANSCODE_`/`ORGANIZE_`
 prefix, required-key validation, and typed Config dataclass; this module
 only owns the shared "read KEY=VALUE lines from a file" mechanics.
 """

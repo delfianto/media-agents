@@ -8,15 +8,20 @@ handler so importing `psammophis.cli` never probes hardware or credentials.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
+import math
+import signal
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from psammophis import __version__
-from psammophis.runtime.context import AppContext
-from psammophis.runtime.reporters import select_reporter
+from psammophis.runtime.context import AppContext, JournalConfigurationError
+from psammophis.runtime.journal import JournalError
+from psammophis.runtime.reporters import JsonlStderrBridge, select_reporter
+from psammophis.runtime.signals import CancellationRequested
 
 # Public command name -> (module path, callable name).
 _COMMANDS: dict[str, tuple[str, str]] = {
@@ -31,6 +36,16 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "subtitle": ("psammophis.subtitle.cli", "main"),
     "track-strip": ("psammophis.trackstrip.cli", "main"),
 }
+
+
+def _nonnegative_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a number") from exc
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError("must be a finite number zero or greater")
+    return seconds
 
 
 def _load_handler(command: str) -> Callable[..., Any]:
@@ -57,10 +72,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--progress-interval",
-        type=float,
+        type=_nonnegative_seconds,
         default=10.0,
         metavar="SECONDS",
-        help="Minimum seconds between non-interactive progress lines (default: 10)",
+        help="Maximum quiet interval between non-interactive progress updates (default: 10)",
     )
     parser.add_argument(
         "--state-dir",
@@ -190,6 +205,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     if feature_args[:1] == ["--"]:
         feature_args = feature_args[1:]
 
+    # Feature-level help is a parser concern, not a run.  Dispatch it without
+    # constructing an AppContext so asking for ``psammophis transcode --help``
+    # does not create a journal entry or emit misleading started/succeeded
+    # progress events.
+    if any(token in ("-h", "--help") for token in feature_args):
+        help_context = AppContext(
+            reporter=getattr(global_ns, "reporter", "auto"),
+            progress_interval=float(getattr(global_ns, "progress_interval", 10.0)),
+            state_dir=getattr(global_ns, "state_dir", None),
+            journal=False,
+            command=command,
+        )
+        try:
+            return int(_load_handler(command)(feature_args, help_context) or 0)
+        except SystemExit as exc:
+            code = exc.code
+            return 0 if code is None else int(code) if isinstance(code, int) else 1
+
     journal: bool | None
     if getattr(global_ns, "no_journal", False):
         journal = False
@@ -205,33 +238,104 @@ def main(argv: Sequence[str] | None = None) -> int:
         journal=journal,
         command=command,
     )
-    # Reporter is constructed here; features may replace the composite sink.
-    context.sink = select_reporter(context.reporter, progress_interval=context.progress_interval)
-    context.attach_emitter(command)
+    reporter_sink = select_reporter(
+        context.reporter,
+        progress_interval=context.progress_interval,
+    )
+    context.set_reporter_sink(reporter_sink)
 
-    handler = _load_handler(command)
+    bridge = JsonlStderrBridge(context) if context.reporter == "jsonl" else None
+    redirect = (
+        contextlib.redirect_stderr(bridge) if bridge is not None else contextlib.nullcontext()
+    )
+    exit_code = 0
+    terminal_status: str | None = None
+    finalizing = False
+
+    def request_cancellation(signum: int, _frame: object) -> None:
+        if finalizing:
+            return
+        raise CancellationRequested(signum)
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, request_cancellation)
     try:
-        # Prefer context-aware handlers; fall back to argv-only for gradual migration.
-        try:
-            result = handler(feature_args, context)  # type: ignore[misc]
-        except TypeError:
-            result = handler(feature_args)
+        with redirect:
+            handler = _load_handler(command)
+            result = handler(feature_args, context)
+        if isinstance(result, int):
+            exit_code = result
     except SystemExit as exc:
         code = exc.code
         if code is None:
-            return 0
-        if isinstance(code, int):
-            return code
-        print(code, file=sys.stderr)
-        return 1
+            exit_code = 0
+        elif isinstance(code, int):
+            exit_code = code
+        else:
+            print(code, file=bridge if bridge is not None else sys.stderr)
+            exit_code = 1
     except KeyboardInterrupt:
-        print("Interrupted.", file=sys.stderr)
-        return 130
-    if result is None:
-        return 0
-    if isinstance(result, int):
-        return result
-    return 0
+        exit_code = 130
+        terminal_status = "cancelled"
+        context.record_outcome(status="cancelled")
+        if context.started:
+            context.message("Interrupted by SIGINT", level="warning")
+        else:
+            print("Interrupted by SIGINT", file=bridge if bridge is not None else sys.stderr)
+    except CancellationRequested as exc:
+        exit_code = 128 + exc.signum
+        terminal_status = "cancelled"
+        context.record_outcome(status="cancelled")
+        text = f"Interrupted by signal {exc.signum}"
+        if context.started:
+            context.message(text, level="warning")
+        else:
+            print(text, file=bridge if bridge is not None else sys.stderr)
+    except JournalConfigurationError as exc:
+        exit_code = 2
+        terminal_status = "failed"
+        context.journal = False
+        print(f"Configuration error: {exc}", file=bridge if bridge is not None else sys.stderr)
+    except JournalError as exc:
+        exit_code = 1
+        terminal_status = "failed"
+        context.disable_journal()
+        text = f"Journal disabled after failure: {exc}"
+        if context.started:
+            context.message(text, level="error")
+        else:
+            print(text, file=bridge if bridge is not None else sys.stderr)
+    except Exception as exc:
+        exit_code = 1
+        terminal_status = "failed"
+        print(
+            f"Unhandled {type(exc).__name__}: {exc}",
+            file=bridge if bridge is not None else sys.stderr,
+        )
+    finalizing = True
+    try:
+        try:
+            if bridge is not None:
+                bridge.finish()
+            if not context.started:
+                context.start_run(command=command)
+            context.complete_run(exit_code=exit_code, status=terminal_status)
+        except (JournalConfigurationError, JournalError) as exc:
+            context.journal = False
+            context.disable_journal()
+            if not context.started:
+                context.start_run(command=command)
+            prefix = (
+                "Configuration error"
+                if isinstance(exc, JournalConfigurationError)
+                else "Journal failure"
+            )
+            context.message(f"{prefix}: {exc}", level="error")
+            exit_code = 2 if isinstance(exc, JournalConfigurationError) else 1
+            context.complete_run(exit_code=exit_code, status="failed")
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+    return exit_code
 
 
 if __name__ == "__main__":

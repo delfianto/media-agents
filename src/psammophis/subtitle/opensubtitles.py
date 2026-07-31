@@ -3,7 +3,7 @@
 Needs an API key (register an "API Consumer" in an opensubtitles.com
 account's profile). Logging in with a username/password is optional but
 raises the daily download quota well above the anonymous ceiling of 5
-downloads/24h/IP; see organize/reference/apis.md for the exact tiers and the full
+downloads/24h/IP; see organize/../../notes/organize-apis.md for the exact tiers and the full
 endpoint reference this was built against.
 """
 

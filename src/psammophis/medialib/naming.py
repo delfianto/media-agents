@@ -1,7 +1,7 @@
 """Destination path/filename builders for Plex and Jellyfin's naming
 conventions. Pure string/path formatting -- no I/O, no network calls.
 
-Conventions (see reference/naming-conventions.md for the full citations):
+Conventions (see ../../notes/library-naming.md for the full citations):
   - Plex:     folder/file provider-ID tag is `{tmdb-12345}` (curly braces,
               hyphen). Episode files: `Series - s01e01 - Title.ext` (no ID
               tag on the episode file itself, only on the series folder).

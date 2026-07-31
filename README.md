@@ -1,46 +1,77 @@
-# media-agents
+# Psammophis
 
-Companion skills for an LLM to inspect and maintain a self-hosted Plex media library -- codec/language statistics, stripping non-English audio and subtitle tracks, fixing codec-level playback incompatibilities (e.g. DTS muted over eARC on some TVs), shrinking ultra-high-bitrate Blu-ray remuxes to AV1 + Opus, and identifying/renaming/organizing downloaded media into a Plex/Jellyfin library layout -- all via `ffprobe`/`ffmpeg`/`mkvmerge`/TMDB/OpenSubtitles, with your supervision at every destructive step.
+Psammophis is a standalone Python toolkit for maintaining a self-hosted Plex or Jellyfin media library. The name is a nod to sand snakes: the application quietly removes waste, reshapes large remuxes, and leaves the library easier to carry without making destructive decisions on its own.
 
-## Skills
+The project is packaged under `src/psammophis`, requires Python 3.14, and is invoked through one CLI. It uses `ffprobe`/`ffmpeg` and, where needed, `mkvmerge`, `mkvpropedit`, NVEncC, TMDB, and OpenSubtitles. Operations that change media are dry-run by default and verify temporary output before any original is replaced.
 
-| Skill                                           | Description                                                                                                                                                                                                                                                                                                                                                                                |
-| :---------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [**`analyze`**](skills/analyze)                 | Read-only preview of exactly which `transcode` preset and backend (`cpu`/`nvenc`) a video would get and why -- resolution/HDR tier, a measured grain/noise score, and the resulting decision, sourced from the same `psammophis.medialib` functions `transcode` itself runs so the two can never drift out of sync. Never encodes or writes anything.                              |
-| [**`artwork`**](skills/artwork)                 | Fetches or refreshes TMDB posters, fanart, episode stills, and NFO sidecars for an already-organized library.                                                                                                                                                                                                                                                                              |
-| [**`transcode`**](skills/transcode)             | Re-encodes video to AV1 (CPU via `libsvtav1`, or GPU via `av1_nvenc` on an Ada Lovelace+ NVIDIA GPU) and audio to Opus, squeezing max quality per byte out of Blu-ray remuxes -- resolution/HDR/Dolby-Vision-aware presets for film and anime/cartoon sources, grain-aware backend routing, live progress monitoring, and the same dry-run/verify-then-swap safety model as `track-strip`. |
-| [**`env-check`**](skills/env-check)             | Read-only audit of whether this machine has everything the other skills above need -- `ffmpeg`/`ffprobe`/`mkvmerge`/`nvencc`/`dovi_tool`/`hdr10plus_tool`/`stash-mcp` on `PATH`, Python 3.14+, an AV1-capable NVIDIA GPU, `guessit` plus TMDB/OpenSubtitles credentials -- with a plain-language install/setup hint for anything missing. Never installs or changes anything itself.       |
-| [**`mkvedit`**](skills/mkvedit)                 | Safely edits MKV titles, cover attachments, track names/languages/defaults/flags, tags, and chapters in place with `mkvpropedit`, without remuxing; dry-run and backup-first.                                                                                                                                                                                                              |
-| [**`organize`**](skills/organize)               | Identifies inbox media via guessit/TMDB and safely renames/moves it into Plex or Jellyfin layout with confidence-gated matching.                                                                                                                                                                                                                                                           |
-| [**`compare`**](skills/compare)                 | Deeply compares encoded videos or compressed images with their sources: stratified VMAF/PSNR/SSIM for video, color-managed SSIM/PSNR/RMSE for JPEG/PNG-to-AVIF/WebP/JXL, and optional SSIMULACRA2 for both. Never modifies either input.                                                                                                                                                   |
-| [**`stash-app`**](skills/stash-app)             | Organizes, tags, and browses a local [Stash](https://github.com/stashapp/stash) media server (performers, scenes, tags) via the `stash-mcp` MCP server -- prompt-only, no Python harness. See `mcp_config.json`/`mcp/stash/` for the MCP server config and tool schemas it depends on.                                                                                                     |
-| [**`subtitle`**](skills/subtitle)               | Fetches OpenSubtitles sidecars for already-organized movies and episodes, independently of identification and artwork.                                                                                                                                                                                                                                                                     |
-| [**`track-strip`**](skills/track-strip)         | Scans a Plex library (`ffprobe`), reports video/audio/subtitle codec and language statistics, and remuxes/transcodes files to strip non-English tracks, drop redundant/incompatible audio codecs, trim to a single audio track, and drop SDH subtitles -- all dry-run-by-default with a verify-then-swap safety model.                                                                     |
+## Quick start
 
-## Application (psammophis)
-
-All scripted skills invoke one packaged CLI:
-
-```bash
-# From a media library with this repo symlinked as .agents
-.agents/run.sh track-strip scan
-.agents/run.sh --reporter jsonl transcode run --path "Dune" --yes
-
-# From the checkout
-./run.sh env-check
-uv run psammophis --help
-```
-
-For the two renamed features, the final public commands are `transcode` and
-`compare`; their pre-refactor spellings are intentionally unsupported.
-
-Install/dev:
+From the repository checkout:
 
 ```bash
 uv sync --group dev
+./run.sh --help
+./run.sh transcode --help
+./run.sh compare --help
 uv run pytest
+```
+
+From a media-library root where this repository is symlinked as `.agents`:
+
+```bash
+.agents/run.sh analyze --help
+.agents/run.sh track-strip stats
+.agents/run.sh transcode probe --path "Dune"
+.agents/run.sh --reporter jsonl transcode run --path "Dune" --yes
+```
+
+`run.sh` is the human-friendly launcher. `uv run psammophis ...` is the direct project entry point. For automation or an LLM, use `--reporter jsonl`: it emits versioned lifecycle, progress-heartbeat, result, and completion events while keeping command output structured and durable run journals available through `runs show` and `runs events`.
+
+## Skills
+
+| Skill | Purpose |
+| --- | --- |
+| [`analyze`](skills/analyze) | Read-only explanation of the AV1 preset, detected HDR/grain characteristics, backend, and active encoder implementation. |
+| [`artwork`](skills/artwork) | Fetch posters, fanart, episode stills, and NFO sidecars for organized media. |
+| [`compare`](skills/compare) | Full-reference video comparison (VMAF/PSNR/SSIM/MS-SSIM) and color-managed still-image comparison, with stratified or full sampling. |
+| [`env-check`](skills/env-check) | Read-only audit of external tools, Python, GPU capability, and optional credentials. |
+| [`mkvedit`](skills/mkvedit) | Safely edit Matroska titles, track metadata, attachments, tags, and chapters without re-encoding. |
+| [`organize`](skills/organize) | Match inbox media with guessit/TMDB and move it into Plex/Jellyfin naming layouts. |
+| [`stash-app`](skills/stash-app) | Prompt-only workflows for a local Stash server through the configured MCP server. |
+| [`subtitle`](skills/subtitle) | Find and download OpenSubtitles sidecars for already-organized media. |
+| [`track-strip`](skills/track-strip) | Scan and remux media to keep the intended language/audio/subtitle tracks and drop redundant codecs. |
+| [`transcode`](skills/transcode) | Re-encode video to AV1 and selected audio to Opus with CPU/GPU, HDR/Dolby-Vision, grain-aware, and bitrate-capped paths. |
+
+The only public command names are `transcode` and `compare`; historical names are intentionally not accepted.
+
+## Choosing the right operation
+
+- Use `analyze` before a large encode when you want to see why a profile, preset, backend, grain route, or CRF was selected.
+- Use `track-strip` when codecs should remain unchanged and the goal is to remove foreign dubs, redundant audio, SDH subtitles, or incompatible tracks.
+- Use `transcode` when video size is the problem. It targets high-quality AV1, can convert audio to Opus, and is substantially slower or more expensive than a remux. Confirm the exact scope before passing `--yes`.
+- Use `compare` before purging originals. Numbers are evidence, not a replacement for checking the worst-looking frames and testing playback.
+
+## Notes and rationale
+
+The skill definitions stay short and operational. Detailed, reusable explanations live in [`notes/`](notes/):
+
+- [`av1-encoding.md`](notes/av1-encoding.md) — current CPU/GPU presets, mainline versus `svt-av1-hdr`, bitrate caps, expected savings, and AV1/Opus tradeoffs.
+- [`track-filtering.md`](notes/track-filtering.md) — language, anime, commentary, and SDH detection, safety gates, stripping mechanics, and space-saving estimates.
+- [`quality-comparison.md`](notes/quality-comparison.md) — comparison pipeline, sampling, metrics, and how to interpret values.
+- [`library-naming.md`](notes/library-naming.md) — Plex/Jellyfin folder, filename, artwork, and NFO conventions.
+- [`organize-apis.md`](notes/organize-apis.md) — TMDB, OpenSubtitles, and the OpenSubtitles hash request shapes.
+
+These notes deliberately describe portable lessons and current behavior, not one machine's incident diary or a particular library's file names.
+
+## Development
+
+```bash
+uv sync --group dev
+uv run ruff check .
+uv run ruff format .
+uv run basedpyright .
+uv run pytest -q
 uv build
 ```
 
-See `AGENTS.md` for repository layout, progress/journal contracts, and quality gates.
-See `REFACTOR.md` for the packaging migration plan and trackers.
+See [`AGENTS.md`](AGENTS.md) for repository conventions, safety requirements, launcher behavior, and quality gates. External tools and credentials are checked by `env-check`; the application does not install them automatically.

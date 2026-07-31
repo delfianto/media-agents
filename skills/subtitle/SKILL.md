@@ -18,5 +18,5 @@ is used. Configure `SUBTITLE_OPENSUBTITLES_API_KEY`; username and password are
 optional quota credentials. Other keys are `SUBTITLE_LANGUAGES`, `SUBTITLE_SERVER`,
 and `SUBTITLE_USER_AGENT`.
 
-See [`organize` naming conventions](../organize/reference/naming-conventions.md) for
+See [`organize` naming conventions](../../notes/library-naming.md) for
 the provider-tag contract.

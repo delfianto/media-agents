@@ -1,7 +1,8 @@
 """Encode presets: resolution tier x content profile -> concrete encoder
 settings for both the CPU (libsvtav1) and GPU (av1_nvenc) backends.
 
-Numbers and their sourcing are written up in full in reference/presets.md --
+Numbers and their sourcing are written up in the repository's
+notes/av1-encoding.md --
 this module only holds the resulting table plus the pure lookup/adjustment
 functions. Two axes decide a preset:
 
@@ -38,7 +39,7 @@ PROFILES = ("film", "anime")
 # through the encode. Fixed with a hard ceiling tied to the source's own
 # video bitrate -- SVT-AV1's "Capped CRF" (`--mbr`) and NVENC's
 # `-maxrate`/`-bufsize` alongside `-cq`, both confirmed directly (see
-# reference/incidents.md) to clamp output bitrate to the ceiling. This is
+# notes/av1-encoding.md) to clamp output bitrate to the ceiling. This is
 # purely a safety net for genuine Blu-ray remux sources (40-80+ Mbps 4K):
 # CRF/CQ-driven output there normally lands far under any reasonable
 # fraction of that, so the cap never binds -- it only engages exactly when

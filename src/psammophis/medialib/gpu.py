@@ -3,10 +3,8 @@
 Deliberately does not key off GPU name/architecture (e.g. "RTX 40xx and up
 support AV1 encode") -- that table goes stale the moment a new generation
 ships and doesn't account for professional/datacenter cards with unrelated
-names, and this machine already demonstrates why: an RTX 4080 (Ada, AV1
-encode-capable) and an RTX 3060 (Ampere, decode-only) both show up under
-`nvidia-smi`, at indices 0 and 1 respectively. Instead, each candidate GPU is
-handed one real (trivial, ~instant) av1_nvenc encode -- if ffmpeg accepts it,
+names. Different cards and driver generations can coexist, so each candidate
+GPU is handed one real (trivial, ~instant) av1_nvenc encode -- if ffmpeg accepts it,
 that GPU can do the job, independent of what NVIDIA calls it this generation.
 """
 

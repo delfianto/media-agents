@@ -184,7 +184,7 @@ def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
         return False, "source had Dolby Vision but output is missing DOVI configuration record"
     # Checked regardless of Dolby Vision presence -- nvencc's DV path used to
     # leave these unset even with RPU/DOVI config intact (see
-    # reference/incidents.md), which this check would have caught if it
+    # ../../notes/track-filtering.md), which this check would have caught if it
     # hadn't been carved out for exactly that reason. nvencc_cmd.py now sets
     # them explicitly (colorinfo.nvencc_hdr_args), so there's no longer a
     # reason a passing DV output should be missing them.

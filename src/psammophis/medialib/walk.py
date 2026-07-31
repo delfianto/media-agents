@@ -1,22 +1,4 @@
-"""Shared media-file directory walker used by every skill's CLI.
-
-`os.walk` is a live generator: a subdirectory is only read once the walk
-actually descends into it. That means anything a long-running command
-writes mid-run into a not-yet-visited, non-hidden subdirectory of the tree
-it's walking gets picked up as a "new" input file in the very same
-invocation. `exclude_dirs` prunes such subtrees (given as resolved absolute
-paths) before the walk ever reaches them -- needed whenever a plain
-(non-dot-prefixed) output/backup/log directory points inside the tree being
-walked. Confirmed for real: an AV1 transcode `--output-dir transcode` run
-inside its own `--root` produced a doubly-compressed
-`transcode/transcode/...` copy of the very file `transcode/...` had just
-finished writing (see skills/transcode/reference/incidents.md). That fix
-originally landed only in transcode's own walker; track-strip's
-`apply`/`transcode --backup-dir` used a separate, independently-written
-walker with no such guard at all, so the same incident was still fully
-reproducible there. This module exists so the guard only has to be written
---and gets exercised by tests -- once.
-"""
+"""Shared media-file walker with output-directory exclusion safeguards."""
 
 import os
 from collections.abc import Iterator

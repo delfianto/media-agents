@@ -195,6 +195,30 @@ def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
 
     orig_video = original_probed.get("video") or {}
     new_video = new_probed["video"]
+    if not _has_measured_codec_statistics(new_video):
+        return False, "output AV1 stream is missing measured track statistics"
+    stale_video = _copied_codec_statistics(orig_video, new_video)
+    if stale_video:
+        names = ", ".join(sorted(stale_video))
+        return False, f"output AV1 stream carries stale source statistics: {names}"
+    stale_audio = [
+        i
+        for i, stream in enumerate(new_probed.get("audio", []))
+        if any(
+            _copied_codec_statistics(source, stream) for source in original_probed.get("audio", [])
+        )
+    ]
+    if stale_audio:
+        indexes = ", ".join(str(i) for i in stale_audio)
+        return False, f"output Opus stream(s) carry stale source statistics: {indexes}"
+    missing_audio = [
+        i
+        for i, stream in enumerate(new_probed.get("audio", []))
+        if not _has_measured_codec_statistics(stream)
+    ]
+    if missing_audio:
+        indexes = ", ".join(str(i) for i in missing_audio)
+        return False, f"output Opus stream(s) are missing measured track statistics: {indexes}"
     if colorinfo.has_dolby_vision(orig_video) and not colorinfo.has_dolby_vision(new_video):
         return False, "source had Dolby Vision but output is missing DOVI configuration record"
     # Checked regardless of Dolby Vision presence -- nvencc's DV path used to
@@ -220,9 +244,60 @@ def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
 
     orig_size = original_probed["format"].get("size")
     new_size = new_probed["format"].get("size")
-    if orig_size and new_size and new_size > orig_size:
-        return True, f"ok (warning: output {new_size}B > source {orig_size}B -- not smaller!)"
-    return True, "ok"
+    if orig_size and new_size:
+        reduction = (1 - new_size / orig_size) * 100
+        orig_bitrate = _overall_bitrate_mbps(original_probed)
+        new_bitrate = _overall_bitrate_mbps(new_probed)
+        bitrate_detail = (
+            f"; overall bitrate {orig_bitrate:.2f} -> {new_bitrate:.2f} Mb/s"
+            if orig_bitrate is not None and new_bitrate is not None
+            else ""
+        )
+        size_detail = (
+            f"{orig_size / 1024**3:.2f} -> {new_size / 1024**3:.2f} GiB "
+            f"({reduction:.1f}% smaller){bitrate_detail}"
+        )
+        if new_size > orig_size:
+            return True, f"ok (warning: {size_detail} -- output is larger!)"
+        return True, f"ok ({size_detail})"
+    return True, "ok (size/bitrate unavailable)"
+
+
+def _overall_bitrate_mbps(probed: dict) -> float | None:
+    fmt = probed.get("format") or {}
+    bit_rate = fmt.get("bit_rate")
+    if bit_rate:
+        return bit_rate / 1_000_000
+    size = fmt.get("size")
+    duration = fmt.get("duration")
+    if size and duration:
+        return size * 8 / duration / 1_000_000
+    return None
+
+
+def _copied_codec_statistics(source_stream: dict, output_stream: dict) -> set[str]:
+    """Identify source-derived byte/rate/frame counters copied verbatim onto
+    a transcoded stream. DURATION is intentionally excluded: a muxer may
+    generate a correct output duration that naturally equals the source."""
+    source_tags = source_stream.get("statistics_tags") or {}
+    output_tags = output_stream.get("statistics_tags") or {}
+    codec_prefixes = ("BPS", "NUMBER_OF_FRAMES", "NUMBER_OF_BYTES")
+    copied: set[str] = set()
+    for prefix in codec_prefixes:
+        source_values = {
+            value for key, value in source_tags.items() if key.upper().startswith(prefix)
+        }
+        for key, value in output_tags.items():
+            if key.upper().startswith(prefix) and value in source_values:
+                copied.add(key)
+    return copied
+
+
+def _has_measured_codec_statistics(stream: dict) -> bool:
+    tags = stream.get("statistics_tags") or {}
+    return any(key.upper().startswith("BPS") for key in tags) and any(
+        key.upper().startswith("NUMBER_OF_BYTES") for key in tags
+    )
 
 
 def _attach_cover_remux(video_path: Path, cover_image_path: Path) -> None:
@@ -249,6 +324,16 @@ def _attach_cover_remux(video_path: Path, cover_image_path: Path) -> None:
             f"cover-art remux failed ({proc.returncode}): {(proc.stderr or '')[-500:]}"
         )
     tmp.replace(video_path)
+
+
+def _refresh_track_statistics(video_path: Path) -> None:
+    """Measure the encoded tracks and write accurate Matroska BPS/duration/
+    frame/byte counters without remuxing the media payload."""
+    cmd = ["mkvpropedit", str(video_path), "--add-track-statistics-tags"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()[-500:]
+        raise RuntimeError(f"track-statistics refresh failed ({proc.returncode}): {detail}")
 
 
 def build_encode_command(
@@ -411,6 +496,16 @@ def transcode_one(
             detail = f"[grain={grain.score:.4f}] {detail}"
         return TranscodeResult(str(rel), "planned", detail), probed
 
+    if shutil.which("mkvpropedit") is None:
+        return (
+            TranscodeResult(
+                str(rel),
+                "error",
+                "mkvpropedit is required to write accurate output track statistics",
+            ),
+            probed,
+        )
+
     # Written inside the actual target directory (output_dir when set, else
     # the source's own directory for in-place mode) -- not tucked next to the
     # source regardless of where the result is headed, which is confusing to
@@ -454,6 +549,7 @@ def transcode_one(
         if engine == "nvencc" and resolved_cover is not None:
             _attach_cover_remux(tmp_path, resolved_cover)
 
+        _refresh_track_statistics(tmp_path)
         ok, detail = verify_output(probed, tmp_path)
         if not ok:
             tmp_path.unlink(missing_ok=True)

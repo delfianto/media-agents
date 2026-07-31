@@ -142,6 +142,14 @@ def build_nvencc_command(
     # NUMBER_OF_BYTES) from the source's own track. See colorinfo.nvencc_hdr_args.
     cmd += colorinfo.nvencc_hdr_args(video)
     cmd += ["--video-metadata", "clear"]
+    for key in ("language", "title"):
+        value = video.get(key)
+        if value:
+            cmd += ["--video-metadata", f"{key}={value}"]
+    # Global metadata defaults to copy in NVEncC, as does audio metadata.
+    # Clear both so source creation/encoding fields and mkvmerge BPS/
+    # NUMBER_OF_* counters cannot describe the newly encoded file.
+    cmd += ["--metadata", "clear", "--audio-metadata", "clear"]
 
     audio_tracks = [stream_to_nvencc_track_number(all_audio, s) for s in kept_audio]
     # Encode only the kept tracks: copy-select then re-encode those to Opus.
@@ -152,6 +160,10 @@ def build_nvencc_command(
         br = presets.opus_bitrate_kbps(s["channels"])
         cmd += ["--audio-codec", f"{track_n}?libopus"]
         cmd += ["--audio-bitrate", f"{track_n}?{br}"]
+        for key in ("language", "title"):
+            value = s.get(key)
+            if value:
+                cmd += ["--audio-metadata", f"{track_n}?{key}={value}"]
 
     if kept_subs:
         sub_tracks = [stream_to_nvencc_track_number(all_subs, s) for s in kept_subs]

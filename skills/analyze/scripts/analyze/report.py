@@ -108,7 +108,8 @@ def format_analysis(a: FileAnalysis) -> str:
     lines.append(f"    preset: {a.preset.name} -- {a.preset.description}")
     lines.append(
         f"    cpu:   preset={a.preset.svt_preset} crf={a.preset.crf} tune={a.preset.svt_tune} "
-        f"film-grain={a.preset.film_grain} extra={a.preset.svt_extra}"
+        f"film-grain={a.preset.film_grain} "
+        f"film-grain-denoise={int(a.preset.film_grain_denoise)} extra={a.preset.svt_extra}"
     )
     lines.append(
         f"    nvenc: preset={a.preset.nvenc_preset} tune={a.preset.nvenc_tune} "

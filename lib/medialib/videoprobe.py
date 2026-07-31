@@ -20,6 +20,7 @@ _DOVI_CONFIG = "DOVI configuration record"
 # ffprobe names for HDR10+ dynamic metadata vary slightly by version/build;
 # match any side_data_type that clearly names HDR10+.
 _HDR10_PLUS_MARKERS = ("HDR10+", "hdr10+", "Dynamic HDR10+")
+_MATROSKA_STAT_PREFIXES = ("BPS", "DURATION", "NUMBER_OF_FRAMES", "NUMBER_OF_BYTES")
 
 
 def probe_file(path: str | Path) -> dict:
@@ -83,6 +84,7 @@ def _find_hdr10_plus(side_data_list: list[dict]) -> dict | None:
 
 def _normalize_video(s: dict) -> dict:
     side_data_list = s.get("side_data_list", []) or []
+    tags = s.get("tags", {}) or {}
     return {
         "index": s.get("index"),
         "codec_name": s.get("codec_name"),
@@ -90,7 +92,10 @@ def _normalize_video(s: dict) -> dict:
         "width": s.get("width"),
         "height": s.get("height"),
         "pix_fmt": s.get("pix_fmt"),
-        "bit_rate": _to_int(s.get("bit_rate")),
+        "bit_rate": _to_int(s.get("bit_rate")) or _matroska_stat_int(tags, "BPS"),
+        "language": tags.get("language"),
+        "title": tags.get("title"),
+        "statistics_tags": _matroska_statistics_tags(tags),
         "color_primaries": s.get("color_primaries"),
         "color_transfer": s.get("color_transfer"),
         "color_space": s.get("color_space"),
@@ -114,9 +119,10 @@ def _normalize_audio(s: dict) -> dict:
         # codecs (TrueHD in particular) since there's no single header value
         # to report -- the container's own BPS tag (the same fallback
         # track-strip's scan.py uses) fills that gap.
-        "bit_rate": _to_int(s.get("bit_rate")) or _to_int(tags.get("BPS")),
+        "bit_rate": _to_int(s.get("bit_rate")) or _matroska_stat_int(tags, "BPS"),
         "language": tags.get("language"),
         "title": tags.get("title"),
+        "statistics_tags": _matroska_statistics_tags(tags),
     }
 
 
@@ -128,8 +134,29 @@ def _normalize_subtitle(s: dict) -> dict:
         "codec_name": s.get("codec_name"),
         "language": tags.get("language"),
         "title": tags.get("title"),
+        "statistics_tags": _matroska_statistics_tags(tags),
         "hearing_impaired": bool(disposition.get("hearing_impaired")),
     }
+
+
+def _matroska_statistics_tags(tags: dict) -> dict[str, str]:
+    """Return mkvmerge-style derived statistics, including language-suffixed
+    variants such as BPS-eng. These values are useful on a source but must not
+    be copied to a transcoded output stream."""
+    return {
+        str(key): str(value)
+        for key, value in tags.items()
+        if any(str(key).upper().startswith(prefix) for prefix in _MATROSKA_STAT_PREFIXES)
+    }
+
+
+def _matroska_stat_int(tags: dict, prefix: str) -> int | None:
+    for key, value in tags.items():
+        if str(key).upper() == prefix or str(key).upper().startswith(prefix + "-"):
+            parsed = _to_int(value)
+            if parsed is not None:
+                return parsed
+    return None
 
 
 def _to_float(v) -> float | None:

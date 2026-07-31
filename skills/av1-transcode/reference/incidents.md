@@ -2,6 +2,12 @@
 
 Real bugs found while building and smoke-testing this skill against actual files in this library (a real 4K HDR10+Dolby Vision remux, and a real anime episode), in the same spirit as `track-strip/reference/incidents.md` -- the fixes behind several safety/correctness details in `presets.py`, `gpu.py`, and `run.py` came from here, not from reading documentation alone.
 
+## Valid output was deleted because its frame count correctly matched the source
+
+**What happened:** the first full Fallout re-encode after fixing grain synthesis completed all 102,938 frames in 1h42m at 22.45 Mb/s, then verification rejected it as carrying a stale `NUMBER_OF_FRAMES` tag. `mkvpropedit` had recalculated that value from the output, but a correct same-frame-rate transcode naturally has exactly the source's frame count. The normal failed-verification cleanup removed the temporary output, wasting the completed encode.
+
+**Fix:** stale-statistics detection only compares `BPS` and `NUMBER_OF_BYTES`, which must change when HEVC/TrueHD become AV1/Opus. `DURATION` and `NUMBER_OF_FRAMES` are explicitly allowed to equal the source. A regression test presents recalculated output statistics with the same frame count and requires verification to accept them.
+
 ## Grain-routed CPU encode preserved the grain and produced 41.8 Mb/s AV1
 
 **What happened:** a 71-minute Fallout UHD Blu-ray remux was correctly identified as noisy and routed from the RTX 4080 to CPU/SVT-AV1, but the 1h46m encode only shrank 30.74 GiB to 21.09 GiB. The real video rate was 41.8 Mb/s. MediaInfo also displayed impossible 57.5 Mb/s/28.8 GiB video and 2.8 Mb/s/1.41 GiB audio figures because ffmpeg had copied the source HEVC/TrueHD `BPS-eng` and `NUMBER_OF_BYTES-eng` tags unchanged.

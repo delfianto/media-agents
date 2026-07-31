@@ -277,11 +277,11 @@ def _overall_bitrate_mbps(probed: dict) -> float | None:
 
 def _copied_codec_statistics(source_stream: dict, output_stream: dict) -> set[str]:
     """Identify source-derived byte/rate/frame counters copied verbatim onto
-    a transcoded stream. DURATION is intentionally excluded: a muxer may
-    generate a correct output duration that naturally equals the source."""
+    a transcoded stream. DURATION and NUMBER_OF_FRAMES are intentionally
+    excluded: a correct transcode naturally preserves both."""
     source_tags = source_stream.get("statistics_tags") or {}
     output_tags = output_stream.get("statistics_tags") or {}
-    codec_prefixes = ("BPS", "NUMBER_OF_FRAMES", "NUMBER_OF_BYTES")
+    codec_prefixes = ("BPS", "NUMBER_OF_BYTES")
     copied: set[str] = set()
     for prefix in codec_prefixes:
         source_values = {

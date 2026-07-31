@@ -141,16 +141,15 @@ def cmd_list_presets(args):
         print(f"    {preset.description}")
         print(
             f"    cpu:   preset={preset.svt_preset} crf={preset.crf} tune={preset.svt_tune} "
-            f"film-grain={preset.film_grain} extra={preset.svt_extra}"
+            f"film-grain={preset.film_grain} "
+            f"film-grain-denoise={int(preset.film_grain_denoise)} extra={preset.svt_extra}"
         )
         print(
             f"    nvenc: preset={preset.nvenc_preset} tune={preset.nvenc_tune} "
             f"cq={preset.nvenc_cq} extra={preset.nvenc_extra}"
         )
     print(
-        f"\nHDR sources (PQ/HLG transfer) get crf/cq lowered by "
-        f"{presets.HDR_QUALITY_BONUS} automatically -- more bits for the same preset, "
-        "since gradient banding is far more visible in HDR."
+        "\nHDR preserves 10-bit color and HDR metadata without changing the CRF/CQ quality target."
     )
     print(
         f"Output bitrate is additionally capped to {presets.MAX_BITRATE_FRACTION_OF_SOURCE:.0%} "

@@ -27,13 +27,21 @@ def _video(**overrides):
 def _probed(video, *, duration=9326.6, size=45_000_000_000):
     return {
         "video": video,
-        "audio": [{"index": 1}],
+        "audio": [{"index": 1, "statistics_tags": {}}],
         "format": {"duration": duration, "size": size},
     }
 
 
 def _patch_new_probed(monkeypatch, new_video, *, duration=9326.6, size=45_000_000_000):
+    new_video.setdefault(
+        "statistics_tags",
+        {"BPS": "38000000", "NUMBER_OF_BYTES": "44000000000"},
+    )
     new_probed = _probed(new_video, duration=duration, size=size)
+    new_probed["audio"][0]["statistics_tags"] = {
+        "BPS": "450000",
+        "NUMBER_OF_BYTES": "500000000",
+    }
     monkeypatch.setattr(run_mod, "probe_file", lambda path: new_probed)
     monkeypatch.setattr(run_mod, "_decode_spot_check", lambda path: (True, "ok"))
 
@@ -43,7 +51,27 @@ def test_verify_output_passes_when_dv_present_and_color_tags_intact(monkeypatch,
     _patch_new_probed(monkeypatch, _video(dolby_vision={"dv_profile": 10}))
     ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv")
     assert ok
-    assert detail == "ok"
+    assert "GiB" in detail
+    assert "overall bitrate" in detail
+
+
+def test_verify_output_rejects_copied_video_statistics(monkeypatch, tmp_path):
+    stale = {"BPS-eng": "57537352", "NUMBER_OF_BYTES-eng": "30878657322"}
+    orig = _probed(_video(statistics_tags=stale))
+    _patch_new_probed(monkeypatch, _video(statistics_tags=stale), size=22_000_000_000)
+    ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv")
+    assert not ok
+    assert "stale source statistics" in detail
+
+
+def test_verify_output_rejects_missing_measured_statistics(monkeypatch, tmp_path):
+    orig = _probed(_video())
+    new_probed = _probed(_video(statistics_tags={}), size=22_000_000_000)
+    monkeypatch.setattr(run_mod, "probe_file", lambda path: new_probed)
+    monkeypatch.setattr(run_mod, "_decode_spot_check", lambda path: (True, "ok"))
+    ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv")
+    assert not ok
+    assert "missing measured track statistics" in detail
 
 
 def test_verify_output_fails_when_dv_present_but_color_transfer_lost(monkeypatch, tmp_path):

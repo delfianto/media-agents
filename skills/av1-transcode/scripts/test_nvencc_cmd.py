@@ -153,6 +153,16 @@ def test_build_nvencc_command_sets_explicit_color_flags_not_metadata_copy():
     assert cmd[cmd.index("--transfer") + 1] == "smpte2084"
     assert cmd[cmd.index("--colormatrix") + 1] == "bt2020nc"
     assert "--master-display" in cmd
+    assert cmd[cmd.index("--metadata") + 1] == "clear"
+    assert cmd[cmd.index("--audio-metadata") + 1] == "clear"
+
+
+def test_build_nvencc_command_restores_audio_identity_after_clearing_stats():
+    audio = _probed()["audio"][0]
+    audio["title"] = "Surround 7.1"
+    cmd = nvencc_cmd.build_nvencc_command("in.mkv", "out.mkv", _probed(audio=[audio]), _preset())
+    assert "1?language=eng" in cmd
+    assert "1?title=Surround 7.1" in cmd
 
 
 def test_build_nvencc_command_omits_unmapped_color_flags():

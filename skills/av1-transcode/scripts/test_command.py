@@ -40,6 +40,7 @@ def _audio(index, language, channels=2, codec_name="truehd", profile=None):
         "channels": channels,
         "bit_rate": None,
         "language": language,
+        "title": None,
     }
 
 
@@ -52,6 +53,28 @@ def test_only_primary_video_stream_is_mapped():
     cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu")
     assert cmd.count("-map") >= 1
     assert "0:0" in cmd  # the video stream's own index
+
+
+def test_transcoded_stream_metadata_is_cleared_then_identity_fields_restored():
+    audio = _audio(1, "eng")
+    audio["title"] = "Surround 7.1"
+    probed = _probed(audio=[audio])
+    probed["video"]["language"] = "eng"
+    cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu")
+    assert cmd[cmd.index("-map_metadata") + 1] == "-1"
+    assert "-map_metadata:s:v" in cmd
+    assert "-map_metadata:s:a" in cmd
+    assert "language=eng" in cmd
+    assert "title=Surround 7.1" in cmd
+
+
+def test_cpu_film_grain_explicitly_enables_denoising():
+    probed = _probed(audio=[_audio(1, "eng")])
+    cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu")
+    params = cmd[cmd.index("-svtav1-params") + 1]
+    assert "film-grain=10" in params
+    assert "film-grain-denoise=1" in params
+    assert "scd=" not in params
 
 
 def test_audio_language_filter_maps_matching_tracks_when_single_is_disabled():

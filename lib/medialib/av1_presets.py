@@ -13,10 +13,11 @@ functions. Two axes decide a preset:
     by that signal), so unlike track-strip's anime-audio-policy heuristic,
     profile here is always an explicit choice by whoever invokes `run`.
 
-HDR is a third, orthogonal condition applied on top of whichever (tier,
-profile) preset was chosen -- see apply_hdr_adjustment() -- rather than a
-separate set of preset entries, since it's also an objective per-file fact
-(the transfer characteristic ffprobe reports) rather than a style choice.
+HDR is an objective per-file fact used for color and dynamic-metadata
+preservation, but it does not alter the quality target. CRF/CQ already targets
+quality, and the old blanket two-point HDR reduction made every 4K HDR film
+encode use the exceptionally conservative CRF 18/CQ 20 without evidence that
+the extra bitrate improved visible quality.
 """
 
 from dataclasses import dataclass, field
@@ -24,12 +25,6 @@ from itertools import pairwise
 
 DEFAULT_PROFILE = "film"
 PROFILES = ("film", "anime")
-
-# HDR PQ/HLG content gets 2 fewer CRF/CQ points (more bits) than the SDR
-# baseline for the same tier/profile -- banding in smooth gradients is far
-# more visible in PQ's higher dynamic range, and this library's HDR titles
-# are also almost always the highest-value archival sources (4K UHD remuxes).
-HDR_QUALITY_BONUS = 2
 
 # CRF/CQ target a *quality level*, not a *size ceiling* -- on an
 # already-efficiently-encoded source (e.g. a deliberately bitrate-capped
@@ -57,26 +52,12 @@ class Preset:
     crf: int
     svt_tune: int  # 0 = VQ, 1 = PSNR, 2 = SSIM (SvtAv1EncApp --tune)
     film_grain: int  # 0 = off
+    film_grain_denoise: bool
     svt_extra: dict[str, str] = field(default_factory=dict)
     nvenc_preset: str = "p7"
     nvenc_tune: str = "uhq"
     nvenc_cq: float = 26.0
     nvenc_extra: dict[str, str] = field(default_factory=dict)
-
-    def with_hdr_bonus(self) -> Preset:
-        return Preset(
-            name=self.name,
-            description=self.description,
-            svt_preset=self.svt_preset,
-            crf=max(1, self.crf - HDR_QUALITY_BONUS),
-            svt_tune=self.svt_tune,
-            film_grain=self.film_grain,
-            svt_extra=self.svt_extra,
-            nvenc_preset=self.nvenc_preset,
-            nvenc_tune=self.nvenc_tune,
-            nvenc_cq=max(0.0, self.nvenc_cq - HDR_QUALITY_BONUS),
-            nvenc_extra=self.nvenc_extra,
-        )
 
 
 # tune=0 (VQ) for film: the community-consensus choice for subjective quality
@@ -94,11 +75,12 @@ _ANIME_EXTRA = {**_VARIANCE_BOOST, "sharpness": "1"}
 PRESETS: dict[tuple[str, str], Preset] = {
     ("2160p", "film"): Preset(
         name="2160p-film",
-        description="4K live-action Blu-ray remux (SDR baseline; HDR bonus applies automatically)",
+        description="4K live-action Blu-ray/UHD remux",
         svt_preset=4,
         crf=20,
         svt_tune=0,
         film_grain=10,
+        film_grain_denoise=True,
         svt_extra=_VARIANCE_BOOST,
         nvenc_preset="p7",
         nvenc_tune="uhq",
@@ -112,6 +94,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=22,
         svt_tune=1,
         film_grain=4,
+        film_grain_denoise=True,
         svt_extra=_ANIME_EXTRA,
         nvenc_preset="p7",
         nvenc_tune="uhq",
@@ -125,6 +108,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=24,
         svt_tune=0,
         film_grain=10,
+        film_grain_denoise=True,
         svt_extra=_VARIANCE_BOOST,
         nvenc_preset="p7",
         nvenc_tune="uhq",
@@ -138,6 +122,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=25,
         svt_tune=1,
         film_grain=4,
+        film_grain_denoise=True,
         svt_extra={**_ANIME_EXTRA, "tf-strength": "1"},
         nvenc_preset="p7",
         nvenc_tune="uhq",
@@ -151,6 +136,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=26,
         svt_tune=0,
         film_grain=8,
+        film_grain_denoise=True,
         svt_extra=_VARIANCE_BOOST,
         nvenc_preset="p7",
         nvenc_tune="hq",
@@ -164,6 +150,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=27,
         svt_tune=1,
         film_grain=4,
+        film_grain_denoise=True,
         svt_extra=_ANIME_EXTRA,
         nvenc_preset="p7",
         nvenc_tune="hq",
@@ -177,6 +164,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=28,
         svt_tune=0,
         film_grain=6,
+        film_grain_denoise=True,
         nvenc_preset="p7",
         nvenc_tune="hq",
         nvenc_cq=30,
@@ -189,6 +177,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=28,
         svt_tune=1,
         film_grain=4,
+        film_grain_denoise=True,
         nvenc_preset="p7",
         nvenc_tune="hq",
         nvenc_cq=31,
@@ -213,11 +202,11 @@ def resolution_tier(height: int) -> str:
 
 
 def select_preset(height: int, profile: str, hdr: bool) -> Preset:
+    del hdr  # HDR changes signaling, not the quality target.
     if profile not in PROFILES:
         raise ValueError(f"unknown profile {profile!r}, expected one of {PROFILES}")
     tier = resolution_tier(height)
-    preset = PRESETS[(tier, profile)]
-    return preset.with_hdr_bonus() if hdr else preset
+    return PRESETS[(tier, profile)]
 
 
 def source_video_bitrate_bps(probed: dict) -> int | None:

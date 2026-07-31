@@ -4,7 +4,8 @@ own bitrate -- see presets.MAX_BITRATE_FRACTION_OF_SOURCE), the single
 best-quality audio track matching `audio_lang` re-encoded to Opus (falling
 back to every track if none match -- see langfilter.filter_audio), plain
 (non-SDH) subtitle tracks matching `subtitle_lang` stream-copied,
-fonts/attachments always kept, chapters/metadata stream-copied untouched,
+fonts/attachments always kept, chapters retained, meaningful stream metadata
+re-applied explicitly (without stale source codec statistics),
 and an optional cover image added as a proper Matroska attachment (not an
 embedded video stream -- see reference/incidents.md for why that
 distinction matters).
@@ -26,13 +27,6 @@ _IMAGE_MIMETYPES = {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
 }
-
-# scd=1 (scene change detection): keyframes land on actual cuts rather than
-# only the fixed GOP interval, a plain efficiency win with no quality
-# downside -- recommended as a baseline in community SVT-AV1 guides
-# (ffmpeg.party) and cheap enough to apply unconditionally rather than
-# thread through every preset entry.
-_BASE_SVT_PARAMS = {"scd": "1"}
 
 
 def build_command(
@@ -77,7 +71,23 @@ def build_command(
     for s in kept_subtitles:
         cmd += ["-map", f"0:{s['index']}"]
     cmd += ["-map", "0:t?"]  # font/attachment streams, if any -- never filtered
-    cmd += ["-map_metadata", "0", "-map_chapters", "0"]
+    # Do not inherit the source's global timestamp/encoder fields or its
+    # per-video/audio mkvmerge statistics. Those describe the HEVC/TrueHD
+    # source and become impossible values after AV1/Opus transcoding (for
+    # example NUMBER_OF_BYTES larger than the entire output). Stream-specific
+    # dummy mappings disable ffmpeg's automatic metadata copy for only the
+    # transcoded stream types; copied subtitles and attachments keep their
+    # language/font metadata. Chapters are mapped independently.
+    cmd += [
+        "-map_metadata",
+        "-1",
+        "-map_metadata:s:v",
+        "-1",
+        "-map_metadata:s:a",
+        "-1",
+        "-map_chapters",
+        "0",
+    ]
 
     if backend == "cpu":
         cmd += _svtav1_video_args(video, preset, hdr, dolby_vision, cap_bps)
@@ -107,6 +117,8 @@ def build_command(
         cmd += ["-color_range", video["color_range"]]
 
     cmd += _audio_args(kept_audio)
+    cmd += _meaningful_stream_metadata_args("v", [video])
+    cmd += _meaningful_stream_metadata_args("a", kept_audio)
     cmd += _disposition_args("a", len(kept_audio))
 
     if kept_subtitles:
@@ -168,11 +180,15 @@ def _svtav1_video_args(
     dolby_vision: bool,
     max_bitrate_bps: int | None,
 ) -> list[str]:
-    params = dict(_BASE_SVT_PARAMS)
-    params.update(preset.svt_extra)
+    params = dict(preset.svt_extra)
     params["tune"] = str(preset.svt_tune)
     if preset.film_grain:
         params["film-grain"] = str(preset.film_grain)
+        # SVT-AV1 4.x defaults this to 0. Without the explicit 1, the
+        # expensive source grain remains in the coded frames and synthesized
+        # grain is signaled on top of it. That defeated the entire efficiency
+        # reason grain-aware routing selected the CPU backend.
+        params["film-grain-denoise"] = "1" if preset.film_grain_denoise else "0"
     if hdr:
         params.update(colorinfo.svtav1_hdr_params(video))
     if max_bitrate_bps:
@@ -250,4 +266,17 @@ def _audio_args(audio_streams: list[dict]) -> list[str]:
     for i, stream in enumerate(audio_streams):
         bitrate = presets.opus_bitrate_kbps(stream["channels"])
         args += [f"-c:a:{i}", "libopus", f"-b:a:{i}", f"{bitrate}k"]
+    return args
+
+
+def _meaningful_stream_metadata_args(stream_type: str, streams: list[dict]) -> list[str]:
+    """Restore human-authored identity fields after disabling automatic
+    metadata copy. Codec-derived BPS/DURATION/NUMBER_OF_* statistics are
+    deliberately not restored because the muxer cannot recalculate them."""
+    args: list[str] = []
+    for i, stream in enumerate(streams):
+        for key in ("language", "title"):
+            value = stream.get(key)
+            if value:
+                args += [f"-metadata:s:{stream_type}:{i}", f"{key}={value}"]
     return args

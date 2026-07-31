@@ -29,13 +29,18 @@ def test_select_preset_sdr_matches_table():
     assert preset is presets.PRESETS[("1080p", "film")]
 
 
-def test_select_preset_hdr_lowers_crf_and_cq_without_mutating_table():
+def test_select_preset_hdr_uses_same_quality_target_as_sdr():
     base = presets.PRESETS[("2160p", "film")]
     hdr_preset = presets.select_preset(2160, "film", hdr=True)
-    assert hdr_preset.crf == base.crf - presets.HDR_QUALITY_BONUS
-    assert hdr_preset.nvenc_cq == base.nvenc_cq - presets.HDR_QUALITY_BONUS
-    # HDR selection must not mutate the shared table entry other callers read.
-    assert base.crf == presets.PRESETS[("2160p", "film")].crf
+    assert hdr_preset is base
+    assert hdr_preset.crf == 20
+    assert hdr_preset.nvenc_cq == 22
+
+
+def test_every_film_grain_preset_enables_source_denoising():
+    for preset in presets.PRESETS.values():
+        if preset.film_grain:
+            assert preset.film_grain_denoise
 
 
 def test_select_preset_unknown_profile_raises():

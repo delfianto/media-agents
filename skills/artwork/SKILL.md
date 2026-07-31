@@ -19,5 +19,5 @@ Every run is dry-run unless `--yes` is present.
 
 Configure `ARTWORK_TMDB_API_KEY` or shared `TMDB_API_KEY`, with optional
 `ARTWORK_SERVER` and `ARTWORK_USER_AGENT`. See
-[`organize` naming conventions](../organize/reference/naming-conventions.md) for the
+[`organize` naming conventions](../../notes/library-naming.md) for the
 provider-tag contract.

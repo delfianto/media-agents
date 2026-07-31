@@ -86,7 +86,7 @@ def pick_best_audio(streams: list[dict]) -> dict | None:
     """The single highest-quality track by codec family, then channels,
     then bitrate -- e.g. picks a TrueHD Atmos 7.1 track over a same-language
     E-AC3 "compatibility" copy of the same mix, a pattern real remuxes
-    carry (see reference/incidents.md)."""
+    carry (see notes/track-filtering.md)."""
     if not streams:
         return None
     return max(streams, key=_quality_key)

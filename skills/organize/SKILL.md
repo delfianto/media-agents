@@ -26,5 +26,6 @@ Configuration uses `ORGANIZE_TMDB_API_KEY` with shared `TMDB_API_KEY` fallback, 
 `ORGANIZE_SERVER`, `ORGANIZE_MOVIES_DIR`, `ORGANIZE_TV_SHOWS_DIR`,
 `ORGANIZE_INBOX_DIR`, `ORGANIZE_MIN_CONFIDENCE`, and `ORGANIZE_USER_AGENT`.
 
-Read [naming-conventions.md](reference/naming-conventions.md) when diagnosing path or
-provider-tag behavior. Read [apis.md](reference/apis.md) for TMDB API context.
+Read [`notes/library-naming.md`](../../notes/library-naming.md) when diagnosing path or
+provider-tag behavior. Read [`notes/organize-apis.md`](../../notes/organize-apis.md)
+for TMDB API context.

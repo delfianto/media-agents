@@ -163,19 +163,7 @@ def svtav1_hdr_params(video: dict) -> dict[str, str]:
 
 
 def nvencc_hdr_args(video: dict) -> list[str]:
-    """NVEncC argv for the source's static color/HDR metadata.
-
-    NVEncC does not infer container-level colorprim/transfer/colormatrix from
-    the decoded source on its own -- confirmed directly against a real 4K DV
-    remux (Dune Part One): the previous approach here, `--video-metadata
-    copy`, copies freeform per-stream *tags* (title, and, as a side effect,
-    stale mkvmerge statistics like BPS/NUMBER_OF_BYTES from the source's own
-    HEVC track), which is an entirely different thing from bitstream color
-    signaling -- the encoded AV1 stream came out with color_primaries/
-    color_transfer/color_space all "unknown" despite the flag being set.
-    These are NVEncC's actual color flags, set explicitly from what probe.py
-    already read off the source, same approach as svtav1_hdr_params above.
-    """
+    """Build NVEncC arguments for static source color and HDR metadata."""
     args: list[str] = []
 
     primaries = video.get("color_primaries") or ""

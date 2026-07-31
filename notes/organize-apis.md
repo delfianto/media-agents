@@ -1,10 +1,10 @@
 # TMDB, OpenSubtitles, and the OpenSubtitles hash algorithm
 
-Both clients (`tmdb.py`, `opensubtitles.py`) are stdlib `urllib` only, built directly against the endpoint shapes below. **Neither has been exercised against the real, live API** -- this environment has no TMDB or OpenSubtitles account/API key to test with. What *is* verified: the request shapes match each service's own published API reference, the response parsing matches their documented JSON shapes, and the full plan-building pipeline (`organize.py`) was smoke-tested end-to-end with mocked client responses standing in for real ones (see the module docstrings). Treat the network-calling code itself as reviewed-but-live-untested until it's run against a real key.
+Both clients (`tmdb.py`, `opensubtitles.py`) use stdlib `urllib` and are built directly against the endpoint shapes below. Keep network tests mocked in the unit suite, then perform a small live smoke test after configuring real keys; the API services can change independently of this repository.
 
 ## TMDB (The Movie Database) API v3
 
-- **Auth:** a free API key from an account's Settings -> API page. No subscription, no per-end-user requirement -- this is the whole reason this skill uses TMDB for TV shows too, rather than also integrating TheTVDB (see reference/naming-conventions.md).
+- **Auth:** a free API key from an account's Settings -> API page. No subscription, no per-end-user requirement -- this is the whole reason this skill uses TMDB for TV shows too, rather than also integrating TheTVDB (see library-naming.md).
 - **Base URL:** `https://api.themoviedb.org/3`
 - **Search:** `GET /search/movie?query=...&year=...`, `GET /search/tv?query=...&first_air_date_year=...`
 - **Details:** `GET /movie/{id}?append_to_response=external_ids,credits`, `GET /tv/{id}?append_to_response=external_ids`, `GET /tv/{id}/season/{s}/episode/{e}?append_to_response=credits` -- `append_to_response` folds what would otherwise be separate requests (cast/crew, external IDs like the IMDb id) into the one call.
@@ -23,4 +23,4 @@ Both clients (`tmdb.py`, `opensubtitles.py`) are stdlib `urllib` only, built dir
 
 `hash = file_size + sum_uint64_le(first 64KB) + sum_uint64_le(last 64KB)`, all arithmetic unsigned 64-bit with natural overflow (wrapping), formatted as a zero-padded 16-character lowercase hex string. Originally from Media Player Classic, adopted by OpenSubtitles as the primary way to look up subtitles for an exact file independent of its (often wrong or missing) filename.
 
-Full spec and official test vectors: [opensubtitles.github.io/oshash](https://opensubtitles.github.io/oshash/). This implementation's own test suite (`test_oshash.py`) couldn't use those exact test vectors directly (they're hashes of specific real video files this environment doesn't have), so it instead verifies the same properties by construction: an all-zero file's hash must equal its size exactly (every summed value is 0), and a crafted all-`0xFF` file's hash is checked against an *independently* computed expected value that exercises the same 64-bit wraparound the real algorithm depends on -- see the test file for the exact derivation. Files under 128KB (131,072 bytes) can't be hashed at all; `compute()` returns `None` rather than raising, since that's a legitimate "this file is too small," not an error.
+Full spec and official test vectors: [opensubtitles.github.io/oshash](https://opensubtitles.github.io/oshash/). The hash implementation should be tested with independent fixtures that exercise unsigned 64-bit wraparound. Files under 128KB (131,072 bytes) cannot be hashed; `compute()` returns `None` rather than raising, since that is a legitimate "file too small" result.

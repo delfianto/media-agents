@@ -112,7 +112,7 @@ a replacement for a purpose-built image metric.
 - Always finish with human inspection of the reported worst timestamps on the
   intended HDR/SDR playback path before accepting a new archival preset.
 
-Read [references/metrics.md](references/metrics.md) when changing model
+Read [`notes/quality-comparison.md`](../../notes/quality-comparison.md) when changing model
 selection, HDR preprocessing, thresholds, or report language.
 
 ## Dependencies

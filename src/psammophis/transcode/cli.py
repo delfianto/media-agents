@@ -614,7 +614,7 @@ def _add_grain_args(sp: argparse.ArgumentParser) -> None:
         type=_grain_threshold,
         default=GRAIN_CPU_THRESHOLD,
         help="Grain/noise score (1 - denoise-diff SSIM, see medialib.grain and "
-        f"reference/presets.md) at or above which --backend auto prefers cpu over nvenc "
+        f"notes/av1-encoding.md) at or above which --backend auto prefers cpu over nvenc "
         f"even when a GPU is available (default: {GRAIN_CPU_THRESHOLD} -- provisional, "
         "calibrated against only a handful of real titles so far). Only checked when a "
         "GPU is present and Dolby Vision isn't already forcing cpu regardless.",

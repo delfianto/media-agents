@@ -1,6 +1,6 @@
 """Shared command outcome / exit-code helpers.
 
-Exit codes (see REFACTOR.md):
+Exit codes:
 
 - 0 success (including dry-run with no operational errors)
 - 1 operational failure or partial batch failure

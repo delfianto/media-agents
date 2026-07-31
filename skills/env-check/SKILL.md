@@ -41,7 +41,10 @@ Prints one line per check, grouped by which skill needs it, `OK` (found) / `!!` 
 | `subtitle` | `SUBTITLE_OPENSUBTITLES_API_KEY` | Optional until a fetch is requested. |
 | `stash-app` | `stash-mcp` | No -- only relevant if that MCP server is actually configured for this session (see root `mcp_config.json`). |
 
-The AV1-capable-GPU check reuses `transcode`'s own capability probe (`medialib.gpu`, shared rather than re-implemented here -- see root `AGENTS.md`'s `psammophis.medialib` section for why duplicating this exact check would be the wrong move): it hands a real GPU a trivial `av1_nvenc` encode rather than guessing from the GPU's name, since this library's own machine has both an encode-capable RTX 4080 and a decode-only RTX 3060 side by side.
+The AV1-capable-GPU check reuses `transcode`'s own capability probe
+(`medialib.gpu`, shared rather than re-implemented here): it hands each
+candidate GPU a trivial `av1_nvenc` encode rather than guessing from a model
+name or architecture table.
 
 ## Extending
 

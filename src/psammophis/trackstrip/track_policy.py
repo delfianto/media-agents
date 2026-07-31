@@ -330,7 +330,7 @@ def plan_streams(streams, policy: Policy):
     (falls back to the original default/first primary track). Commentary
     tracks don't count toward this guarantee -- a file can't be considered
     "safe" just because commentary-only audio survived (see the fallback
-    block below for the incident that made this necessary).
+    block below for the safety invariant this enforces).
     """
     keep_video = [t for t in streams if t["codec_type"] == "video"]
     audio = [t for t in streams if t["codec_type"] == "audio"]
@@ -350,14 +350,9 @@ def plan_streams(streams, policy: Policy):
     if audio and not any(not is_commentary(t) for t in keep_audio):
         # Either zero audio survives, or every surviving track is commentary
         # -- neither is acceptable, and the two look the same to a naive
-        # "is keep_audio empty?" check. That gap is exactly what silently
-        # left Prometheus (2012) with only its two director/writer
-        # commentary tracks after --drop-audio-codec dts removed its DTS-HD
-        # MA track: AC3 "survived" the policy, but both AC3 tracks were
-        # commentary, so the file lost its only real soundtrack. Prefer
-        # restoring a non-commentary track (the original default, or the
-        # first one) over whatever's already kept; only fall back to a
-        # commentary track if truly nothing else exists on the file.
+        # "is keep_audio empty?" check. Prefer restoring a non-commentary
+        # track (the original default, or the first one) over whatever is
+        # already kept; only fall back to commentary if nothing else exists.
         primary_candidates = [t for t in audio if not is_commentary(t)]
         pool = primary_candidates or audio
         fallback = next((t for t in pool if t.get("default")), pool[0])
@@ -367,10 +362,8 @@ def plan_streams(streams, policy: Policy):
         fallback_used = True
 
     if policy.single_audio_track and len(keep_audio) > 1:
-        # Same non-commentary-first preference as the fallback above, so
-        # this can never re-introduce the Prometheus-shaped bug: a
-        # commentary track is only ever picked if literally nothing else
-        # survived the language/codec policy.
+        # Same non-commentary-first preference as the fallback above, so a
+        # commentary track is only picked if nothing else survived policy.
         non_commentary = [t for t in keep_audio if not is_commentary(t)]
         pool = non_commentary or keep_audio
         primary = next((t for t in pool if t.get("default")), pool[0])

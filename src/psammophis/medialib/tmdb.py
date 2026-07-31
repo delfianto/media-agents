@@ -3,7 +3,7 @@
 A free API key (themoviedb.org account -> Settings -> API) is all this
 needs, for both movies and TV shows -- unlike TheTVDB, which stopped
 offering a no-strings-attached free tier for API access (see
-reference/apis.md). That's the whole reason this skill leans on TMDB alone
+../../notes/organize-apis.md). That's the whole reason this skill leans on TMDB alone
 rather than also integrating TheTVDB.
 """
 

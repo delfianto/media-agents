@@ -64,19 +64,8 @@ def candidates_from_cache(cache, policy, path_filter=None):
         yield rel, entry, result
 
 
-# ffmpeg -v error messages that are known false positives, not evidence of a
-# broken file -- confirmed independently twice: an AV1 remux (Arcane S01E01,
-# tail-seek check -- see the head-only design note below) and a plain HEVC
-# original (His Dark Materials S01, transcode input -- same message appears
-# on the *untouched original* with zero seeking involved, so it cannot be
-# something a remux/transcode introduces). Both cases fully decode clean
-# start-to-finish despite the warning; it's evidently a source-encoder
-# timestamp quirk (e.g. duplicate DTS on an early B-frame) that some players'
-# demuxers tolerate silently but ffmpeg's null-muxer flags at -v error level.
-# Genuine corruption looks nothing like this (see Silo S01E07: "Invalid NAL
-# unit size", "Packet corrupt", "Decode error rate exceeds maximum") so
-# filtering this one specific, well-evidenced message is safe -- it is not a
-# blanket "ignore all warnings" escape hatch.
+# This one ffmpeg message can be emitted by valid sources with a timestamp
+# quirk. It is filtered narrowly; all other decode errors remain fatal.
 _BENIGN_STDERR_SUBSTRINGS = ("non monotonically increasing dts",)
 
 
@@ -90,14 +79,9 @@ def _decode_spot_check(path, seconds=DECODE_SPOT_CHECK_SECONDS):
     metadata checks below catch a truncated/malformed container, but only a
     real decode catches a corrupt stream inside an otherwise well-formed one.
 
-    Deliberately head-only, no seeking: a backward seek (-sseof/-ss) into
-    some AV1 remuxes reliably trips ffmpeg's null-muxer DTS-monotonicity
-    check on the first few frames after the seek, even though mkvmerge
-    exited 0 and a full linear decode of the same file is completely clean.
-    That's mkvmerge writing different-but-valid cue/cluster boundaries than
-    the source encoder interacting badly with AV1's reference structure on
-    cold seek -- a seek artifact, not corruption -- so a tail check done this
-    way would flag good remuxes as broken.
+    Deliberately head-only, no seeking: a backward seek can report a
+    timestamp artifact at a Matroska cluster boundary even when a linear
+    decode is clean, so a tail seek would create false positives.
     """
     cmd = [
         "ffmpeg",

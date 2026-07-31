@@ -1,19 +1,4 @@
-"""Build argv for rigaya's NVEncC when dynamic HDR metadata must be kept.
-
-ffmpeg's `av1_nvenc` has no Dolby Vision RPU or HDR10+ dynamic passthrough.
-NVEncC (package name `nvenc` on this machine, binary `nvencc`) is built with
-libdovi and exposes:
-
-  --dolby-vision-rpu copy|file
-  --dolby-vision-profile 10.0|10.1|...
-  --dhdr10-info copy|file
-
-`dovi_tool` / `hdr10plus_tool` only inject into *HEVC* bitstreams on the
-versions installed here, so they are not used for AV1 inject -- only optional
-extract fallbacks outside this module.
-
-This module is pure argv building + PATH detection (no encode I/O).
-"""
+"""Build NVEncC arguments for dynamic HDR metadata preservation."""
 
 from __future__ import annotations
 
@@ -25,13 +10,13 @@ from psammophis.medialib import colorinfo
 from . import langfilter
 
 # AV1 Dolby Vision profile: 10.1 is the common backward-compatible single-layer
-# choice for OTT/player compatibility (see reference/presets.md). Smoke-test
+# choice for OTT/player compatibility (see notes/av1-encoding.md). Smoke-test
 # before treating as universal -- wrong profile can mean no DV light on device.
 DEFAULT_AV1_DV_PROFILE = "10.1"
 
 # Our ffmpeg presets use NVENC p1-p7 names; NVEncC's -u only accepts
 # default|performance|quality. Map the high-quality end of our table to
-# "quality" (we always use p7 after the p6-vs-p7 incident).
+# "quality".
 _NVENC_PRESET_TO_NVENCC = {
     "p7": "quality",
     "p6": "quality",

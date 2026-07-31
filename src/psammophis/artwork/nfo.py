@@ -5,7 +5,7 @@ server's own online lookup at scan time. Pure string building: takes an
 already-fetched metadata dataclass, returns XML text. No I/O, no network.
 
 Tag set and structure verified against Jellyfin's own NFO-parsing docs
-(organize/reference/naming-conventions.md has the full citation) -- notably the
+(organize/../../notes/library-naming.md has the full citation) -- notably the
 `<uniqueid type="tmdb" default="true">` / `<uniqueid type="imdb">` shape,
 which is what lets a file be identified without any title/year guessing at
 all once this NFO exists next to it.

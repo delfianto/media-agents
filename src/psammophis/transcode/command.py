@@ -7,7 +7,7 @@ back to every track if none match -- see langfilter.filter_audio), plain
 fonts/attachments always kept, chapters retained, meaningful stream metadata
 re-applied explicitly (without stale source codec statistics),
 and an optional cover image added as a proper Matroska attachment (not an
-embedded video stream -- see reference/incidents.md for why that
+embedded video stream -- see notes/track-filtering.md for why that
 distinction matters).
 
 Streams are mapped explicitly by index (not a blanket `-map 0`) so a source
@@ -273,7 +273,7 @@ def _nvenc_video_args(
         # the command line, but the driver rejects it at encoder-open time
         # for av1_nvenc specifically ("Each B frame as reference is not
         # supported" -> "No capable devices found") -- confirmed directly
-        # against this machine's RTX 4080. "middle" (every other B-frame as
+        # against supported NVENC drivers. "middle" (every other B-frame as
         # a reference) is the strongest mode that actually opens.
         "-b_ref_mode",
         "middle",

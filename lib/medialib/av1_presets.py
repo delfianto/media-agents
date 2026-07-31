@@ -23,6 +23,8 @@ the extra bitrate improved visible quality.
 from dataclasses import dataclass, field
 from itertools import pairwise
 
+from .svt import SvtImplementation
+
 DEFAULT_PROFILE = "film"
 PROFILES = ("film", "anime")
 
@@ -49,7 +51,8 @@ class Preset:
     name: str
     description: str
     svt_preset: int
-    crf: int
+    crf: int  # upstream/mainline SVT-AV1
+    svt_hdr_crf: int  # juliobbv-p/svt-av1-hdr (different CRF allocation)
     svt_tune: int  # 0 = VQ, 1 = PSNR, 2 = SSIM (SvtAv1EncApp --tune)
     film_grain: int  # 0 = off
     film_grain_denoise: bool
@@ -78,6 +81,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="4K live-action Blu-ray/UHD remux",
         svt_preset=4,
         crf=20,
+        svt_hdr_crf=27,
         svt_tune=0,
         film_grain=10,
         film_grain_denoise=True,
@@ -92,6 +96,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="4K animation/cartoon UHD remux",
         svt_preset=4,
         crf=22,
+        svt_hdr_crf=29,
         svt_tune=1,
         film_grain=4,
         film_grain_denoise=True,
@@ -106,6 +111,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="1080p live-action Blu-ray remux -- the common case",
         svt_preset=4,
         crf=24,
+        svt_hdr_crf=31,
         svt_tune=0,
         film_grain=10,
         film_grain_denoise=True,
@@ -120,6 +126,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="1080p animation/cartoon Blu-ray remux",
         svt_preset=4,
         crf=25,
+        svt_hdr_crf=32,
         svt_tune=1,
         film_grain=4,
         film_grain_denoise=True,
@@ -134,6 +141,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="720p live-action source (older/catalog titles)",
         svt_preset=5,
         crf=26,
+        svt_hdr_crf=33,
         svt_tune=0,
         film_grain=8,
         film_grain_denoise=True,
@@ -148,6 +156,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="720p animation/cartoon source",
         svt_preset=5,
         crf=27,
+        svt_hdr_crf=34,
         svt_tune=1,
         film_grain=4,
         film_grain_denoise=True,
@@ -162,6 +171,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="Sub-720p live-action source (DVD-era catalog titles)",
         svt_preset=6,
         crf=28,
+        svt_hdr_crf=35,
         svt_tune=0,
         film_grain=6,
         film_grain_denoise=True,
@@ -175,6 +185,7 @@ PRESETS: dict[tuple[str, str], Preset] = {
         description="Sub-720p animation/cartoon source",
         svt_preset=6,
         crf=28,
+        svt_hdr_crf=35,
         svt_tune=1,
         film_grain=4,
         film_grain_denoise=True,
@@ -207,6 +218,19 @@ def select_preset(height: int, profile: str, hdr: bool) -> Preset:
         raise ValueError(f"unknown profile {profile!r}, expected one of {PROFILES}")
     tier = resolution_tier(height)
     return PRESETS[(tier, profile)]
+
+
+def svt_crf(preset: Preset, implementation: SvtImplementation) -> int | None:
+    """Select the quality target for the linked SVT implementation.
+
+    ``None`` means the implementation is unknown.  CPU command construction
+    refuses that state rather than gambling on the wrong CRF scale.
+    """
+    if implementation.flavor == "svt-av1-hdr":
+        return preset.svt_hdr_crf
+    if implementation.flavor == "mainline":
+        return preset.crf
+    return None
 
 
 def source_video_bitrate_bps(probed: dict) -> int | None:

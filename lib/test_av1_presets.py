@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from medialib import av1_presets as presets
+from medialib.svt import SvtImplementation
 
 
 @pytest.mark.parametrize(
@@ -41,6 +42,15 @@ def test_every_film_grain_preset_enables_source_denoising():
     for preset in presets.PRESETS.values():
         if preset.film_grain:
             assert preset.film_grain_denoise
+
+
+def test_svt_hdr_uses_its_own_crf_scale():
+    preset = presets.PRESETS[("2160p", "film")]
+    mainline = SvtImplementation("mainline", "v4.1.0", "test")
+    fork = SvtImplementation("svt-av1-hdr", "v4.1.0", "test")
+    assert presets.svt_crf(preset, mainline) == 20
+    assert presets.svt_crf(preset, fork) == 27
+    assert presets.svt_crf(preset, SvtImplementation("unknown", None, None)) is None
 
 
 def test_select_preset_unknown_profile_raises():

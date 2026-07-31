@@ -15,6 +15,7 @@ from medialib import av1_presets as presets
 from medialib.gpu import detect_av1_nvenc_gpu
 from medialib.grain import GRAIN_CPU_THRESHOLD, measure_grain
 from medialib.libroot import find_library_root, find_own_script_path
+from medialib.svt import detect_svt_implementation
 from medialib.videoprobe import probe_file
 from medialib.walk import walk_media_files
 
@@ -77,6 +78,7 @@ def main(argv: list[str] | None = None) -> None:
 
     gpu_index = detect_av1_nvenc_gpu()
     nvencc_ok = av1_backend.nvencc_available()
+    svt_implementation = detect_svt_implementation()
 
     results = []
     for abs_path in walk_media_files(
@@ -105,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
             gpu_index,
             nvencc_ok,
             grain,
+            svt_implementation,
             grain_threshold=args.grain_threshold,
         )
         results.append(analysis)

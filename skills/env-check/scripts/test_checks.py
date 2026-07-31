@@ -4,6 +4,7 @@ import shutil
 import subprocess
 
 from envcheck import checks
+from medialib.svt import SvtImplementation
 
 
 class _FakeCompleted:
@@ -72,6 +73,18 @@ def test_check_pip_or_uv_missing_both(monkeypatch):
     result = checks.check_pip_or_uv()
     assert result.found is False
     assert "uv" in result.install_hint
+
+
+def test_check_svt_implementation_reports_fork(monkeypatch):
+    monkeypatch.setattr(
+        checks,
+        "detect_svt_implementation",
+        lambda: SvtImplementation("svt-av1-hdr", "v4.1.0-19", "libSvtAv1Enc.so.4"),
+    )
+    result = checks.check_svt_implementation()
+    assert result.found is True
+    assert result.required is True
+    assert "svt-av1-hdr v4.1.0-19" in result.detail
 
 
 def test_check_env_var_found_and_missing():

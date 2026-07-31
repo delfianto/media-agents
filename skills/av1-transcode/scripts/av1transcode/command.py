@@ -19,6 +19,11 @@ from pathlib import Path
 
 from medialib import av1_presets as presets
 from medialib import colorinfo
+from medialib.svt import (
+    SvtImplementation,
+    detect_svt_implementation,
+    implementation_params,
+)
 
 from . import langfilter
 
@@ -42,6 +47,7 @@ def build_command(
     single_audio_track: bool = True,
     max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
     cover_image_path: str | Path | None = None,
+    svt_implementation: SvtImplementation | None = None,
 ) -> list[str]:
     video = probed.get("video")
     if video is None:
@@ -90,7 +96,8 @@ def build_command(
     ]
 
     if backend == "cpu":
-        cmd += _svtav1_video_args(video, preset, hdr, dolby_vision, cap_bps)
+        implementation = svt_implementation or detect_svt_implementation()
+        cmd += _svtav1_video_args(video, preset, hdr, dolby_vision, cap_bps, implementation)
     elif backend == "nvenc":
         if dolby_vision:
             raise ValueError(
@@ -179,8 +186,19 @@ def _svtav1_video_args(
     hdr: bool,
     dolby_vision: bool,
     max_bitrate_bps: int | None,
+    implementation: SvtImplementation,
 ) -> list[str]:
+    selected_crf = presets.svt_crf(preset, implementation)
+    if selected_crf is None:
+        raise ValueError(
+            "cannot identify FFmpeg's SVT-AV1 implementation; refusing a CPU encode "
+            "because upstream and svt-av1-hdr use different CRF scales"
+        )
     params = dict(preset.svt_extra)
+    # Pin the fork's quality-relevant defaults. Its defaults have changed
+    # independently of upstream before; explicit values make a dry-run
+    # reproducible instead of silently changing after a package update.
+    params.update(implementation_params(implementation, video.get("color_transfer")))
     params["tune"] = str(preset.svt_tune)
     if preset.film_grain:
         params["film-grain"] = str(preset.film_grain)
@@ -203,7 +221,7 @@ def _svtav1_video_args(
         "-preset",
         str(preset.svt_preset),
         "-crf",
-        str(preset.crf),
+        str(selected_crf),
         "-pix_fmt",
         "yuv420p10le",
     ]

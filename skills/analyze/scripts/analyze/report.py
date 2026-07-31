@@ -13,6 +13,7 @@ from medialib import av1_backend, colorinfo
 from medialib import av1_presets as presets
 from medialib.grain import GrainMeasurement
 from medialib.humansize import human_size
+from medialib.svt import SvtImplementation, implementation_params
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class FileAnalysis:
     gpu_index: int | None
     grain: GrainMeasurement | None
     grain_threshold: float
+    svt_implementation: SvtImplementation
     backend_error: str | None = None
 
 
@@ -49,6 +51,7 @@ def build_analysis(
     gpu_index: int | None,
     nvencc_ok: bool,
     grain: GrainMeasurement | None,
+    svt_implementation: SvtImplementation,
     grain_threshold: float = av1_backend.GRAIN_CPU_THRESHOLD,
 ) -> FileAnalysis:
     video = probed["video"]
@@ -83,6 +86,7 @@ def build_analysis(
         gpu_index=gpu_index,
         grain=grain,
         grain_threshold=grain_threshold,
+        svt_implementation=svt_implementation,
         backend_error=backend_error,
     )
 
@@ -100,6 +104,11 @@ def _grain_line(a: FileAnalysis) -> str | None:
 
 def format_analysis(a: FileAnalysis) -> str:
     video = a.video
+    active_crf = presets.svt_crf(a.preset, a.svt_implementation)
+    svt_extra = {
+        **a.preset.svt_extra,
+        **implementation_params(a.svt_implementation, video.get("color_transfer")),
+    }
     lines = [a.rel_path]
     lines.append(
         f"    {video['width']}x{video['height']} ({a.tier}) {video['codec_name']} "
@@ -107,9 +116,11 @@ def format_analysis(a: FileAnalysis) -> str:
     )
     lines.append(f"    preset: {a.preset.name} -- {a.preset.description}")
     lines.append(
-        f"    cpu:   preset={a.preset.svt_preset} crf={a.preset.crf} tune={a.preset.svt_tune} "
+        f"    cpu:   {a.svt_implementation.label} preset={a.preset.svt_preset} "
+        f"crf={active_crf if active_crf is not None else 'unavailable'} "
+        f"tune={a.preset.svt_tune} "
         f"film-grain={a.preset.film_grain} "
-        f"film-grain-denoise={int(a.preset.film_grain_denoise)} extra={a.preset.svt_extra}"
+        f"film-grain-denoise={int(a.preset.film_grain_denoise)} extra={svt_extra}"
     )
     lines.append(
         f"    nvenc: preset={a.preset.nvenc_preset} tune={a.preset.nvenc_tune} "
@@ -147,6 +158,13 @@ def analysis_to_dict(a: FileAnalysis) -> dict:
         "backend_error": a.backend_error,
         "gpu_index": a.gpu_index,
         "nvencc_available": a.nvencc_ok,
+        "svt_implementation": a.svt_implementation.flavor,
+        "svt_version": a.svt_implementation.version,
+        "svt_crf": presets.svt_crf(a.preset, a.svt_implementation),
+        "svt_extra": {
+            **a.preset.svt_extra,
+            **implementation_params(a.svt_implementation, a.video.get("color_transfer")),
+        },
         "grain_score": a.grain.score if a.grain is not None else None,
         "grain_samples": list(a.grain.samples) if a.grain is not None else None,
         "grain_threshold": a.grain_threshold,

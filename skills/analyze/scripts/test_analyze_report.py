@@ -7,6 +7,13 @@ from analyze.report import (
     format_analysis,
 )
 from medialib.grain import GrainMeasurement
+from medialib.svt import SvtImplementation
+
+_MAINLINE = SvtImplementation("mainline", "v4.1.0", "test")
+
+
+def _build_analysis(*args, **kwargs):
+    return build_analysis(*args, **kwargs, svt_implementation=_MAINLINE)
 
 
 def _video(**overrides):
@@ -53,14 +60,14 @@ def test_classify_dynamic_range_sdr():
 
 def test_build_analysis_picks_tier_and_preset_from_height_and_profile():
     probed = _probed(_video(height=2160))
-    a = build_analysis("Movie.mkv", probed, "film", gpu_index=0, nvencc_ok=False, grain=None)
+    a = _build_analysis("Movie.mkv", probed, "film", gpu_index=0, nvencc_ok=False, grain=None)
     assert a.tier == "2160p"
     assert a.preset.name == "2160p-film"
 
 
 def test_build_analysis_no_gpu_forces_cpu():
     probed = _probed(_video())
-    a = build_analysis("Movie.mkv", probed, "film", gpu_index=None, nvencc_ok=False, grain=None)
+    a = _build_analysis("Movie.mkv", probed, "film", gpu_index=None, nvencc_ok=False, grain=None)
     assert a.backend == "cpu"
     assert a.backend_error is None
 
@@ -68,7 +75,7 @@ def test_build_analysis_no_gpu_forces_cpu():
 def test_build_analysis_grain_at_or_above_threshold_prefers_cpu():
     probed = _probed(_video(color_transfer="bt709"))  # plain SDR, no DV forcing
     grain = GrainMeasurement(score=0.02, samples=(0.02,))
-    a = build_analysis(
+    a = _build_analysis(
         "Movie.mkv",
         probed,
         "film",
@@ -84,7 +91,7 @@ def test_build_analysis_grain_at_or_above_threshold_prefers_cpu():
 def test_build_analysis_grain_below_threshold_stays_nvenc():
     probed = _probed(_video(color_transfer="bt709"))
     grain = GrainMeasurement(score=0.005, samples=(0.005,))
-    a = build_analysis(
+    a = _build_analysis(
         "Movie.mkv",
         probed,
         "film",
@@ -99,7 +106,7 @@ def test_build_analysis_grain_below_threshold_stays_nvenc():
 def test_format_analysis_includes_key_facts():
     probed = _probed(_video())
     grain = GrainMeasurement(score=0.015, samples=(0.014, 0.016))
-    a = build_analysis(
+    a = _build_analysis(
         "Some Movie.mkv",
         probed,
         "film",
@@ -119,25 +126,27 @@ def test_format_analysis_includes_key_facts():
 
 def test_format_analysis_omits_grain_line_when_not_measured():
     probed = _probed(_video())
-    a = build_analysis("Movie.mkv", probed, "film", gpu_index=None, nvencc_ok=False, grain=None)
+    a = _build_analysis("Movie.mkv", probed, "film", gpu_index=None, nvencc_ok=False, grain=None)
     assert "grain:" not in format_analysis(a)
 
 
 def test_analysis_to_dict_round_trips_key_fields():
     probed = _probed(_video(height=1080, color_transfer="bt709"))
     grain = GrainMeasurement(score=0.02, samples=(0.02,))
-    a = build_analysis("Movie.mkv", probed, "anime", gpu_index=0, nvencc_ok=False, grain=grain)
+    a = _build_analysis("Movie.mkv", probed, "anime", gpu_index=0, nvencc_ok=False, grain=grain)
     d = analysis_to_dict(a)
     assert d["path"] == "Movie.mkv"
     assert d["resolution_tier"] == "1080p"
     assert d["preset"] == "1080p-anime"
     assert d["grain_score"] == 0.02
     assert d["grain_samples"] == [0.02]
+    assert d["svt_implementation"] == "mainline"
+    assert d["svt_crf"] == 25
 
 
 def test_analysis_to_dict_grain_fields_none_when_not_measured():
     probed = _probed(_video())
-    a = build_analysis("Movie.mkv", probed, "film", gpu_index=None, nvencc_ok=False, grain=None)
+    a = _build_analysis("Movie.mkv", probed, "film", gpu_index=None, nvencc_ok=False, grain=None)
     d = analysis_to_dict(a)
     assert d["grain_score"] is None
     assert d["grain_samples"] is None

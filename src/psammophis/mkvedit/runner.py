@@ -11,7 +11,6 @@ from psammophis.runtime.filesystem import (
     restore_from_backup,
     stage_backup,
 )
-from psammophis.runtime.process import ProcessSupervisor
 from psammophis.runtime.signals import CancellationRequested
 
 from .command import Edits, build_command
@@ -38,10 +37,14 @@ def _invoke(
     timeout: float,
     on_heartbeat: Callable[[], None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    if run is not subprocess.run:
-        return run(command, capture_output=True, text=True, check=False)
-    result = ProcessSupervisor(command, timeout=timeout, on_heartbeat=on_heartbeat).run()
-    return subprocess.CompletedProcess(command, result.returncode, result.stdout, result.stderr)
+    # mkvmerge -J / mkvpropedit are fast, one-shot metadata commands, not the
+    # long-running encodes ProcessSupervisor's tail-capped stdout buffer is
+    # built for -- routing them through it silently truncated `mkvmerge -J`
+    # JSON past ~200 lines, breaking inspect() on files with enough tracks
+    # (e.g. many-language anime releases). Call `run` directly instead, same
+    # as every other ffprobe/mkvmerge JSON call site in this codebase.
+    _ = on_heartbeat
+    return run(command, capture_output=True, text=True, timeout=timeout, check=False)
 
 
 def inspect(

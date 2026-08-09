@@ -278,6 +278,8 @@ def main(argv: list[str] | None = None, context: AppContext | None = None) -> in
                     args.threads,
                     temp / f"vmaf-{index:03d}.json",
                     reference.frame_rate,
+                    reference.width,
+                    reference.height,
                     on_heartbeat=(lambda: emit_heartbeat("vmaf")) if emitter is not None else None,
                 )
                 vmaf_frames.extend(frames)

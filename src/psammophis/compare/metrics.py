@@ -48,6 +48,8 @@ def run_vmaf_clip(
     threads: int,
     log_path: Path,
     frame_rate: float,
+    width: int,
+    height: int,
     on_heartbeat: Callable[[], None] | None = None,
 ) -> list[dict[str, float]]:
     # Matroska commonly rounds independently encoded 24000/1001 timestamps
@@ -55,10 +57,20 @@ def run_vmaf_clip(
     # periodic boundaries even when preflight proved both streams are CFR
     # with the same rate/count.  Rebuild both timelines from frame index so
     # frame N is always compared with frame N.
+    #
+    # Some anime Blu-ray encodes crop cinematic-aspect scenes down to a
+    # smaller coded picture height instead of baking letterbox bars into the
+    # bitstream, to save bits -- the container-level width/height (checked at
+    # preflight) stays constant, but individual frames decode smaller than
+    # that for the duration of such a scene. libvmaf refuses mismatched
+    # per-frame dimensions outright, so pad both streams up to the clip's
+    # nominal size before scoring; this is a no-op whenever a stream's frames
+    # already match it.
     frame_pts = f"setpts=N/({frame_rate:.12f}*TB)"
+    pad = f"pad=w={width}:h={height}:x=(ow-iw)/2:y=(oh-ih)/2:color=black"
     graph = (
-        f"[0:v:0]{frame_pts},format=yuv420p10le[ref];"
-        f"[1:v:0]{frame_pts},format=yuv420p10le[dist];"
+        f"[0:v:0]{frame_pts},format=yuv420p10le,{pad}[ref];"
+        f"[1:v:0]{frame_pts},format=yuv420p10le,{pad}[dist];"
         f"[dist][ref]libvmaf=log_fmt=json:log_path={log_path}:"
         f"model='{_model_option(model)}':"
         "feature='name=psnr|name=float_ssim|name=float_ms_ssim':"
@@ -102,6 +114,12 @@ def _run_vmaf_process(
 
 
 def _frame_filter(info: VideoInfo) -> str:
+    # Some anime BD encodes crop cinematic-aspect scenes to a smaller coded
+    # picture height instead of baking in letterbox bars (see run_vmaf_clip),
+    # which otherwise makes ssimulacra2 refuse a still-frame pair pulled from
+    # such a scene with "Image size mismatch". Pad up to the stream's nominal
+    # size; a no-op whenever the frame already matches it.
+    pad = f"pad=w={info.width}:h={info.height}:x=(ow-iw)/2:y=(oh-ih)/2:color=black"
     if info.is_hdr:
         return (
             "zscale=transfer=linear:npl=100,"
@@ -109,9 +127,9 @@ def _frame_filter(info: VideoInfo) -> str:
             "tonemap=mobius:param=0.3:desat=0,"
             "zscale=primaries=bt709:transfer=iec61966-2-1:"
             "matrix=bt709:range=full,"
-            "format=rgb24"
+            f"format=rgb24,{pad}"
         )
-    return "scale=in_range=auto:out_range=full,format=rgb24"
+    return f"scale=in_range=auto:out_range=full,format=rgb24,{pad}"
 
 
 def extract_frame(

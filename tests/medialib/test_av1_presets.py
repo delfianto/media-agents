@@ -73,9 +73,18 @@ def test_film_fast_is_calibrated_for_2160p_only():
         assert (tier, "film-fast") not in presets.PRESETS
 
 
+def test_anime_fast_is_calibrated_for_2160p_only():
+    # Same story as film-fast, above -- see av1_presets.py's PROFILES comment.
+    assert ("2160p", "anime-fast") in presets.PRESETS
+    for tier in ("1080p", "720p", "sd"):
+        assert (tier, "anime-fast") not in presets.PRESETS
+
+
 def test_select_preset_uncalibrated_tier_profile_raises_helpful_error():
     with pytest.raises(ValueError, match=r"film-fast.*1080p"):
         presets.select_preset(1080, "film-fast", hdr=False)
+    with pytest.raises(ValueError, match=r"anime-fast.*1080p"):
+        presets.select_preset(1080, "anime-fast", hdr=False)
 
 
 def test_2160p_film_uses_preset_5_after_the_speed_sweep():
@@ -85,6 +94,13 @@ def test_2160p_film_uses_preset_5_after_the_speed_sweep():
     assert presets.PRESETS[("2160p", "film")].svt_preset == 5
 
 
+def test_2160p_anime_uses_preset_5_after_the_speed_sweep():
+    # Raised from the historical default of 4 -- see notes/av1-encoding.md's
+    # "Preset-speed investigation" for the Ghost in the Shell / Violet
+    # Evergarden sweep that found 5 the best bits-per-quality of 5/6/7.
+    assert presets.PRESETS[("2160p", "anime")].svt_preset == 5
+
+
 def test_select_preset_film_fast_matches_2160p_film_quality_target():
     fast = presets.select_preset(2160, "film-fast", hdr=False)
     base = presets.PRESETS[("2160p", "film")]
@@ -92,6 +108,22 @@ def test_select_preset_film_fast_matches_2160p_film_quality_target():
     assert fast.svt_preset != base.svt_preset
     # Only the CPU preset speed changes -- crf/tune/grain and every nvenc
     # field stay identical to 2160p-film (nvenc has no comparable knob).
+    assert fast.crf == base.crf
+    assert fast.svt_hdr_crf == base.svt_hdr_crf
+    assert fast.svt_tune == base.svt_tune
+    assert fast.film_grain == base.film_grain
+    assert fast.nvenc_preset == base.nvenc_preset
+    assert fast.nvenc_cq == base.nvenc_cq
+    assert fast.nvenc_extra == base.nvenc_extra
+
+
+def test_select_preset_anime_fast_matches_2160p_anime_quality_target():
+    fast = presets.select_preset(2160, "anime-fast", hdr=False)
+    base = presets.PRESETS[("2160p", "anime")]
+    assert fast.svt_preset == 6
+    assert fast.svt_preset != base.svt_preset
+    # Only the CPU preset speed changes -- crf/tune/grain and every nvenc
+    # field stay identical to 2160p-anime (nvenc has no comparable knob).
     assert fast.crf == base.crf
     assert fast.svt_hdr_crf == base.svt_hdr_crf
     assert fast.svt_tune == base.svt_tune

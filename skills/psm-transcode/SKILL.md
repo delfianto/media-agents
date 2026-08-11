@@ -91,9 +91,11 @@ Everything is a CLI flag by default, but `--output-dir`, `--audio-lang`, `--subt
 
 This is a lossy, one-way, hours-long operation on the user's real media, not a quick reversible remux - **always confirm scope with the user before `run --yes`** (which file(s)/show(s), which profile, which backend), same as track-strip's rule for `apply --yes` but more so given the cost of getting it wrong.
 
-## Content profile: `film` (default) or `anime` - never auto-detected
+## Content profile: `film` (default), `anime`, `film-fast`, or `anime-fast` - never auto-detected
 
 Resolution and HDR/Dolby Vision are objective facts `probe` reads straight off the file and always get this right automatically. Whether the video itself is live-action or hand-drawn/flat-shaded animation is not derivable that way, and this skill deliberately does not reuse track-strip's Japanese-audio-track heuristic to guess it: that heuristic answers "is this a Japanese-original release" for language *policy* purposes, and a Japanese-original live-action film (e.g. a Japanese Blu-ray with only a Japanese audio track) would be misclassified as animation by that signal. Pass `--profile anime` explicitly for animation/cartoon sources - ask the user if it isn't obvious from the title/folder.
+
+`film-fast` and `anime-fast` are faster-CPU-preset siblings of `film`/`anime` (2160p-only so far - see `../../notes/av1-encoding.md`'s "Preset-speed investigation"), for batch jobs where wall-clock time matters more than the last fraction of quality. They're a straight substitute for the base profile, not a third axis - pick one of the four, don't combine.
 
 ## Backend: `cpu` (libsvtav1) or `nvenc` (GPU)
 

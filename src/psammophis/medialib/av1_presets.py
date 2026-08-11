@@ -27,17 +27,23 @@ from itertools import pairwise
 from .svt import SvtImplementation
 
 DEFAULT_PROFILE = "film"
-# "film-fast" is currently calibrated for 2160p only -- see notes/av1-encoding.md's
-# "Preset-speed investigation" section for the crf27, 3-clip x svt_preset{2..7}
-# sweep. It raised 2160p-film's own svt_preset from 4 to 5 (statistically free --
-# indistinguishable VMAF/SSIMULACRA2, 7-12% faster) and added film-fast at
-# svt_preset=6 (a real but small tradeoff: 12-22% faster than film, ~0.3-0.5 VMAF /
-# ~1-2 SSIMULACRA2 cost). svt_preset=7 was measured too and rejected -- worse
-# bits-per-quality than 6, not a real speed tier. None of this is extrapolated to
-# 1080p/720p/sd without the same real-encode validation this repo's own culture
-# requires (see root AGENTS.md's "Code quality" section) -- select_preset() raises
-# a clear error rather than a bare KeyError for the gap.
-PROFILES = ("film", "anime", "film-fast")
+# "film-fast" and "anime-fast" are currently calibrated for 2160p only -- see
+# notes/av1-encoding.md's "Preset-speed investigation" section for the crf27
+# (film) / crf29 (anime), 3-clip x svt_preset{5,6,7} sweeps. Film's sweep (run
+# first, over svt_preset{2..7}) raised 2160p-film's own svt_preset from 4 to 5
+# (statistically free -- indistinguishable VMAF/SSIMULACRA2, 7-12% faster) and
+# added film-fast at svt_preset=6 (a real but small tradeoff: 12-22% faster
+# than film, ~0.3-0.5 VMAF / ~1-2 SSIMULACRA2 cost). Anime's sweep reused that
+# same 5/6/7 range on the strength of film's own finding and got the same
+# shape of result: svt_preset=5 raised as 2160p-anime's new baseline, and
+# anime-fast added at svt_preset=6 (7-30% faster, ~0.04-0.52 VMAF / ~0.3-2.2
+# SSIMULACRA2 cost depending on scene complexity). svt_preset=7 was measured
+# for both profiles and rejected both times -- worse bits-per-quality than 6,
+# not a real speed tier. None of this is extrapolated to 1080p/720p/sd without
+# the same real-encode validation this repo's own culture requires (see root
+# AGENTS.md's "Code quality" section) -- select_preset() raises a clear error
+# rather than a bare KeyError for the gap.
+PROFILES = ("film", "anime", "film-fast", "anime-fast")
 
 # CRF/CQ target a *quality level*, not a *size ceiling* -- on an
 # already-efficiently-encoded source (e.g. a deliberately bitrate-capped
@@ -135,8 +141,41 @@ PRESETS: dict[tuple[str, str], Preset] = {
     ),
     ("2160p", "anime"): Preset(
         name="2160p-anime",
-        description="4K animation/cartoon UHD remux",
-        svt_preset=4,
+        description=(
+            "4K animation/cartoon UHD remux -- svt_preset=5 (raised from the "
+            "historical 4). Reused film's own preset-speed sweep methodology "
+            "(fixed crf=29, varied svt_preset 5/6/7) against Ghost in the Shell "
+            "and Violet Evergarden: 5 gave the best bits-per-quality of the "
+            "three on every clip. See notes/av1-encoding.md's 'Preset-speed "
+            "investigation'."
+        ),
+        svt_preset=5,
+        crf=22,
+        svt_hdr_crf=29,
+        svt_tune=1,
+        film_grain=4,
+        film_grain_denoise=True,
+        svt_extra=_ANIME_EXTRA,
+        nvenc_preset="p7",
+        nvenc_tune="uhq",
+        nvenc_cq=24,
+        nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "8"},
+    ),
+    ("2160p", "anime-fast"): Preset(
+        name="2160p-anime-fast",
+        description=(
+            "4K animation/cartoon UHD remux -- faster CPU preset than 2160p-anime "
+            "(svt_preset 6 vs 5), same crf/tune/grain target: 7-30% faster than "
+            "2160p-anime for a real but scene-dependent quality cost (~0.04-0.52 "
+            "VMAF, ~0.3-2.2 SSIMULACRA2 points -- worst on the most detail-dense "
+            "clip tested). svt_preset=7 was also measured and rejected -- 8-13% "
+            "*larger* output than preset 6 for flat-to-worse quality on 2 of 3 "
+            "test clips, the same trap film-fast's own sweep found; don't add an "
+            "'anime-xfast' at 7 without new evidence. Only the CPU preset speed "
+            "changes here; nvenc fields are identical to 2160p-anime since nvenc "
+            "has no comparable preset-speed tradeoff to make."
+        ),
+        svt_preset=6,
         crf=22,
         svt_hdr_crf=29,
         svt_tune=1,

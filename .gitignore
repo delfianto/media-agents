@@ -14,3 +14,7 @@ __pycache__/
 .envrc
 .direnv
 dist/
+
+# Claude Code harness session/runtime lock files -- process-specific, never
+# repo content
+scheduled_tasks.lock

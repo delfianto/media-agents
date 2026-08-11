@@ -24,6 +24,15 @@ LineCallback = Callable[[str, str], None]  # stream_name, line
 HeartbeatCallback = Callable[[], None]
 
 
+class ProcessTerminationFailed(RuntimeError):
+    """A cancelled child did not exit even after SIGKILL plus a second grace
+    period. Raised instead of returning normally so a caller can never
+    mistake this for a clean cancellation -- silently treating an
+    unconfirmed kill as success is exactly what let a transcode ffmpeg child
+    outlive its "cancelled" supervisor and keep writing to a temp file a
+    later retry then collided with."""
+
+
 def _open_log_file(path: Path) -> TextIO:
     """Open a live log for replacement without following special entries."""
     try:
@@ -185,7 +194,19 @@ class ProcessSupervisor:
                         signal.SIGINT if isinstance(exc, KeyboardInterrupt) else signal.SIGTERM
                     )
                 self.cancel(requested_signal)
-                self._wait_after_cancel(threads)
+                try:
+                    self._wait_after_cancel(threads)
+                except ProcessTerminationFailed as term_exc:
+                    # Don't let an unconfirmed kill replace `exc` -- a bare
+                    # `raise` after an unguarded second call here would let
+                    # this exception silently override the original one
+                    # (Python's implicit chaining keeps it only as
+                    # `__context__`, invisible to type-based handling), which
+                    # would turn a real KeyboardInterrupt/CancellationRequested
+                    # into a generic RuntimeError for every caller that
+                    # pattern-matches on exception type to treat cancellation
+                    # differently from a genuine failure.
+                    exc.add_note(f"additionally, process would not terminate: {term_exc}")
                 raise
             return ProcessResult(
                 returncode=returncode,
@@ -210,16 +231,26 @@ class ProcessSupervisor:
         if proc is None:
             return
         try:
-            proc.wait(timeout=self.cancellation_grace)
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                if os.name == "posix":
-                    os.killpg(proc.pid, signal.SIGKILL)
-                else:
-                    proc.kill()
-            proc.wait()
-        for thread in threads:
-            thread.join(timeout=1.0)
+            try:
+                proc.wait(timeout=self.cancellation_grace)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError):
+                    if os.name == "posix":
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    else:
+                        proc.kill()
+                try:
+                    proc.wait(timeout=self.cancellation_grace)
+                except subprocess.TimeoutExpired:
+                    raise ProcessTerminationFailed(
+                        f"pid {proc.pid} did not exit even after SIGKILL and "
+                        f"{self.cancellation_grace:.0f}s grace -- it may still be "
+                        "running unsupervised; inspect and kill it manually before "
+                        "retrying the same target"
+                    ) from None
+        finally:
+            for thread in threads:
+                thread.join(timeout=1.0)
 
 
 def _iter_stream_records(stream: BinaryIO):

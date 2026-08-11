@@ -65,6 +65,9 @@ class TmdbClient:
             f"/tv/{tv_id}/season/{season}/episode/{episode}", append_to_response="credits"
         )
 
+    def season_details(self, tv_id: int, season: int) -> dict:
+        return self._get(f"/tv/{tv_id}/season/{season}")
+
     @staticmethod
     def image_url(image_path: str | None, size: str = "original") -> str | None:
         if not image_path:

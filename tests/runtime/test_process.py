@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import sys
@@ -8,8 +9,10 @@ import time
 
 import pytest
 
+from psammophis.runtime import process as process_module
 from psammophis.runtime.process import (
     ProcessSupervisor,
+    ProcessTerminationFailed,
     make_ffmpeg_progress_parser,
     parse_ffmpeg_progress_line,
     parse_nvencc_progress_line,
@@ -226,3 +229,66 @@ def test_cancel_reaches_descendant_process_group(tmp_path):
     assert not thread.is_alive()
     assert results[0].cancelled
     assert terminated_path.read_text() == "yes"
+
+
+def test_cancellation_exception_type_survives_when_process_wont_die(monkeypatch):
+    # The one scenario ProcessTerminationFailed exists to catch -- a process
+    # that won't die even after SIGKILL -- must not also swallow the
+    # *original* cancellation exception's type. Many callers throughout this
+    # codebase pattern-match `except KeyboardInterrupt, SystemExit,
+    # CancellationRequested` to handle cancellation differently from a
+    # generic failure; run()'s except-handler calls _wait_after_cancel a
+    # second time, and if that second call also fails to confirm death, it
+    # must not replace the original exception with ProcessTerminationFailed.
+    monkeypatch.setattr(process_module.os, "killpg", lambda *_a, **_k: None)
+
+    def blow_up_on_heartbeat():
+        raise KeyboardInterrupt()
+
+    supervisor = ProcessSupervisor(
+        [
+            sys.executable,
+            "-c",
+            "import signal,time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n",
+        ],
+        on_heartbeat=blow_up_on_heartbeat,
+        heartbeat_interval=0.01,
+        cancellation_grace=0.1,
+    )
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            supervisor.run()
+    finally:
+        monkeypatch.undo()
+        proc = supervisor._proc
+        if proc is not None:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=5)
+
+
+def test_wait_after_cancel_raises_when_kill_has_no_effect(monkeypatch):
+    # A real process can't survive SIGKILL, so the failure this guards
+    # against (a "cancelled" child that was never actually signalled, e.g.
+    # a pid/pgid mismatch) is simulated by making os.killpg a no-op. The
+    # child must still be reported as unconfirmed-dead rather than letting
+    # the caller believe cancellation succeeded -- see ProcessTerminationFailed.
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal,time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n",
+        ],
+        start_new_session=True,
+    )
+    supervisor = ProcessSupervisor(cmd=[], cancellation_grace=0.1)
+    supervisor._proc = child
+    monkeypatch.setattr(process_module.os, "killpg", lambda *_a, **_k: None)
+    try:
+        with pytest.raises(ProcessTerminationFailed, match="did not exit"):
+            supervisor._wait_after_cancel([])
+    finally:
+        monkeypatch.undo()
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGKILL)
+        child.wait(timeout=5)

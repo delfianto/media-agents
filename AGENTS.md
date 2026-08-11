@@ -27,7 +27,13 @@ mcp/<server>/*.json    reference tool-call schemas
 ```
 
 Skills remain workflow and policy adapters. Deterministic execution lives in
-`src/psammophis/`. `stash-app` is prompt/MCP-only and has no Python command.
+`src/psammophis/`. `psm-stash-app` is prompt/MCP-only and has no Python
+command.
+
+Skill (slash-command) names are prefixed `psm-` (`skills/psm-<name>/`) so
+they stay visually grouped and unambiguous in a harness listing skills from
+multiple projects side by side -- purely a skill-invocation convention, kept
+separate from the CLI subcommand names below, which stay plain.
 
 ### Canonical invocation
 
@@ -103,14 +109,16 @@ uv run pytest
 - Type hints on function signatures; pure functions kept separate from CLI I/O.
 - Any operation that mutates the real media library must default to dry-run,
   verify before touching an original, and prefer backup over delete. See
-  `skills/track-strip/reference/incidents.md`.
+  `skills/psm-track-strip/reference/incidents.md`.
 - Nontrivial policy/parsing logic needs pytest under `tests/<feature>/`.
 - **Python 3.14 required.** `ruff format` may emit 3.14 bare-comma `except`
   syntax; do not rewrite it back to tuple form.
 
 ## Adding a new skill
 
-1. `skills/<name>/SKILL.md` with frontmatter (see `skills/track-strip/SKILL.md`).
+1. `skills/psm-<name>/SKILL.md` with frontmatter (see `skills/psm-track-strip/SKILL.md`) --
+   the `psm-` prefix is a skill-naming convention, not part of the CLI command
+   registered in step 2.
 2. If it needs code, add `src/psammophis/<package>/` and register the public
    command in `psammophis.cli._COMMANDS`.
 3. Reuse `psammophis.medialib` / `psammophis.runtime` before inventing walkers,

@@ -2,7 +2,7 @@
 
 Several of these cases are transcribed directly from real files that
 produced a wrong decision during development -- see
-skills/track-strip/reference/incidents.md for the full story behind each
+skills/psm-track-strip/reference/incidents.md for the full story behind each
 one. Keeping them as regression tests (rather than one-off manual audits)
 is the point: three of the four SDH false positives were each found on a
 single specific file out of hundreds, and would not have been caught by a

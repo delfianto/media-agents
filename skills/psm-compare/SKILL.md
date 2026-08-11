@@ -1,5 +1,5 @@
 ---
-name: compare
+name: psm-compare
 description: Deeply compare an encoded video or compressed image against its original/reference source with objective perceptual metrics. Use for source-versus-encode video validation, AV1/x265/x264 preset audits, JPEG/PNG-to-AVIF/WebP/JXL comparisons, image-quality checks, CRF/CQ comparisons, transparency judgments, compression-artifact investigations, or comparing candidate encodes. Runs stratified VMAF plus PSNR/SSIM/MS-SSIM for video; runs color-managed SSIM/PSNR/RMSE and optional SSIMULACRA2 for images; handles HDR consistently, reports lower-tail and worst-frame results for video, and never modifies either input.
 ---
 

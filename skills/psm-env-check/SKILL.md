@@ -1,5 +1,5 @@
 ---
-name: env-check
+name: psm-env-check
 description: Use when the user wants to know whether this machine has everything the other skills in this repo need before running them - missing binaries (ffmpeg, ffprobe, mkvmerge, mkvpropedit, nvencc, dovi_tool, hdr10plus_tool, stash-mcp), the wrong Python version, an AV1-incapable or absent GPU, missing dev tools (ruff, basedpyright, pytest), or missing Python packages/credentials (guessit, TMDB/OpenSubtitles API keys). Triggers on phrases like "is my machine set up right", "check dependencies", "what's missing", "am I ready to run transcode/organize/mkvedit", "check for ffmpeg/mkvmerge/nvencc", or moving this repo to a new machine. Read-only - never installs or changes anything, only reports and suggests.
 allowed-tools:
     - Bash

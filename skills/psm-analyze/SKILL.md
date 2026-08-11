@@ -1,5 +1,5 @@
 ---
-name: analyze
+name: psm-analyze
 description: Use when the user wants to see exactly what transcode's heuristics would decide for a video before actually running it - which resolution/profile preset, which encoder settings (CRF/CQ, tune, film-grain), and which backend (cpu/libsvtav1 vs nvenc/av1_nvenc) it would pick and why, including a measured grain/noise score that routes heavily grainy or noisy sources to cpu (better film-grain synthesis) and clean digital sources to nvenc (much faster) under --backend auto. Triggers on phrases like "what would transcode do with this", "how grainy is this movie", "why would this use cpu instead of gpu", "check the encode plan without running it", "analyze this video's grain level", or any request to preview/explain the encoding decision instead of taking it on faith. Read-only - never encodes, writes, or executes anything, only reports.
 allowed-tools:
     - Bash

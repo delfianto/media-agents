@@ -1,5 +1,5 @@
 ---
-name: mkvedit
+name: psm-mkvedit
 description: Safely edit Matroska metadata in place with mkvpropedit without remuxing media streams. Use for MKV cover attachments, segment titles, track names and languages, default audio/subtitle/video selection, track flags, tags, or chapters when codec payloads should remain untouched.
 ---
 

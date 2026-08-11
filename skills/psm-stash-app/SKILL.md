@@ -1,5 +1,5 @@
 ---
-name: stash-app
+name: psm-stash-app
 description: Your ultimate, unashamed partner in crime for organizing, tagging, and managing your entire collection of NSFW media on your local Stash server. Seamlessly interacts with performers, scenes, and tags via MCP because a well organized stash is a happy stash.
 ---
 

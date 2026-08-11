@@ -1,5 +1,5 @@
 ---
-name: organize
+name: psm-organize
 description: Identify messy inbox movie and TV filenames with guessit and TMDB, then safely rename and move or copy them into Plex or Jellyfin layouts. Use for organizing new downloads, confidence-gated TMDB matching, provider-ID naming, dry-run move plans, or backing up and replacing an existing organized destination.
 ---
 

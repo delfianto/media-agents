@@ -1,5 +1,5 @@
 ---
-name: artwork
+name: psm-artwork
 description: Fetch or refresh posters, fanart, episode stills, and Kodi-compatible NFO metadata from TMDB for media already organized with Plex or Jellyfin provider-ID tags. Use when artwork or NFO sidecars are missing or stale, independently of media identification and renaming.
 ---
 

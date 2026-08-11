@@ -42,7 +42,7 @@ HeartbeatCallback = Callable[[str], None]
 # Conventional poster/cover filenames -- checked in this order next to the
 # source video. "poster.jpg" is what artwork itself leaves
 # behind once a movie is identified (see
-# skills/organize/references/naming-conventions.md); the rest are the
+# skills/psm-organize/references/naming-conventions.md); the rest are the
 # same file under Plex/Jellyfin/Kodi's other common names. No network
 # lookup happens here -- transcode doesn't gain a TMDB dependency for
 # this, it only ever uses whatever's already sitting on disk.

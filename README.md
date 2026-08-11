@@ -135,28 +135,35 @@ From a media-library root where this repository is symlinked as `.agents`:
 
 ## Skills
 
+Skill (slash-command) names are prefixed `psm-` so they group together and
+stay unambiguous in a harness that lists skills from multiple projects side
+by side. This is purely a skill-invocation naming convention -- the
+underlying CLI subcommands (`psammophis analyze`, `psammophis transcode`,
+...) are unaffected and keep their plain names.
+
 | Skill | Purpose |
 | --- | --- |
-| [`analyze`](skills/analyze) | Read-only explanation of the AV1 preset, detected HDR/grain characteristics, backend, and active encoder implementation. |
-| [`artwork`](skills/artwork) | Fetch posters, fanart, episode stills, and NFO sidecars for organized media. |
-| [`compare`](skills/compare) | Full-reference video comparison (VMAF/PSNR/SSIM/MS-SSIM) and color-managed still-image comparison, with stratified or full sampling. |
-| [`env-check`](skills/env-check) | Read-only audit of external tools, Python, GPU capability, and optional credentials. |
-| [`mkvedit`](skills/mkvedit) | Safely edit Matroska titles, track metadata, attachments, tags, and chapters without re-encoding. |
-| [`organize`](skills/organize) | Match inbox media with guessit/TMDB and move it into Plex/Jellyfin naming layouts. |
-| [`stash-app`](skills/stash-app) | Prompt-only workflows for a local Stash server through the configured MCP server. |
-| [`subtitle`](skills/subtitle) | Find and download OpenSubtitles sidecars for already-organized media. |
-| [`track-strip`](skills/track-strip) | Scan and remux media to keep the intended language/audio/subtitle tracks and drop redundant codecs. |
-| [`transcode`](skills/transcode) | Re-encode video to AV1 and selected audio to Opus with CPU/GPU, HDR/Dolby-Vision, grain-aware, and bitrate-capped paths. |
+| [`psm-analyze`](skills/psm-analyze) | Read-only explanation of the AV1 preset, detected HDR/grain characteristics, backend, and active encoder implementation. |
+| [`psm-artwork`](skills/psm-artwork) | Fetch posters, fanart, episode stills, and NFO sidecars for organized media. |
+| [`psm-compare`](skills/psm-compare) | Full-reference video comparison (VMAF/PSNR/SSIM/MS-SSIM) and color-managed still-image comparison, with stratified or full sampling. |
+| [`psm-env-check`](skills/psm-env-check) | Read-only audit of external tools, Python, GPU capability, and optional credentials. |
+| [`psm-mkvedit`](skills/psm-mkvedit) | Safely edit Matroska titles, track metadata, attachments, tags, and chapters without re-encoding. |
+| [`psm-organize`](skills/psm-organize) | Match inbox media with guessit/TMDB and move it into Plex/Jellyfin naming layouts. |
+| [`psm-stash-app`](skills/psm-stash-app) | Prompt-only workflows for a local Stash server through the configured MCP server. |
+| [`psm-subtitle`](skills/psm-subtitle) | Find and download OpenSubtitles sidecars for already-organized media. |
+| [`psm-track-strip`](skills/psm-track-strip) | Scan and remux media to keep the intended language/audio/subtitle tracks and drop redundant codecs. |
+| [`psm-transcode`](skills/psm-transcode) | Re-encode video to AV1 and selected audio to Opus with CPU/GPU, HDR/Dolby-Vision, grain-aware, and bitrate-capped paths. |
 
-Public command names are `analyze`, `artwork`, `compare`, `env-check`,
-`mkvedit`, `organize`, `runs`, `subtitle`, `track-strip`, and `transcode`.
+Public CLI command names (distinct from the skill names above) are `analyze`,
+`artwork`, `compare`, `env-check`, `mkvedit`, `organize`, `runs`, `subtitle`,
+`track-strip`, and `transcode`.
 
 ## Choosing the right operation
 
-- Use `analyze` before a large encode when you want to see why a profile, preset, backend, grain route, or CRF was selected.
-- Use `track-strip` when codecs should remain unchanged and the goal is to remove foreign dubs, redundant audio, SDH subtitles, or incompatible tracks.
-- Use `transcode` when video size is the problem. It targets high-quality AV1, can convert audio to Opus, and is substantially slower or more expensive than a remux. Confirm the exact scope before passing `--yes`.
-- Use `compare` before purging originals. Numbers are evidence, not a replacement for checking the worst-looking frames and testing playback.
+- Use `psm-analyze` before a large encode when you want to see why a profile, preset, backend, grain route, or CRF was selected.
+- Use `psm-track-strip` when codecs should remain unchanged and the goal is to remove foreign dubs, redundant audio, SDH subtitles, or incompatible tracks.
+- Use `psm-transcode` when video size is the problem. It targets high-quality AV1, can convert audio to Opus, and is substantially slower or more expensive than a remux. Confirm the exact scope before passing `--yes`.
+- Use `psm-compare` before purging originals. Numbers are evidence, not a replacement for checking the worst-looking frames and testing playback.
 
 ## Notes and rationale
 

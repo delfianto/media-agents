@@ -1,6 +1,6 @@
 ---
-name: transcode
-description: Use when the user wants to shrink a Blu-ray remux or other large movie/show by re-encoding video to AV1 and audio to Opus while preserving quality. Handles 4K HDR/Dolby Vision, 1080p film, anime/cartoon, and older catalog sources; supports high-quality CPU/libsvtav1 and faster Ada-or-newer NVIDIA GPU/av1_nvenc paths with live progress. Auto mode measures grain/noise and routes heavily grainy sources to CPU, caps output bitrate below the source, supports a separate output directory, language filtering, and persistent .env settings. Triggers on "convert/re-encode to AV1", "shrink this remux", "transcode to AV1 and Opus", "use GPU/NVENC", or reducing media size while preserving quality. Use `analyze` for a read-only decision preview and `track-strip` when codecs should remain unchanged.
+name: psm-transcode
+description: Use when the user wants to shrink a Blu-ray remux or other large movie/show by re-encoding video to AV1 and audio to Opus while preserving quality. Handles 4K HDR/Dolby Vision, 1080p film, anime/cartoon, and older catalog sources; supports high-quality CPU/libsvtav1 and faster Ada-or-newer NVIDIA GPU/av1_nvenc paths with live progress. Auto mode measures grain/noise and routes heavily grainy sources to CPU, caps output bitrate below the source, supports a separate output directory, language filtering, and persistent .env settings. Triggers on "convert/re-encode to AV1", "shrink this remux", "transcode to AV1 and Opus", "use GPU/NVENC", or reducing media size while preserving quality. Use `psm-analyze` for a read-only decision preview and `psm-track-strip` when codecs should remain unchanged.
 allowed-tools:
     - Bash
 metadata:

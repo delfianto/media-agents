@@ -1,5 +1,5 @@
 ---
-name: subtitle
+name: psm-subtitle
 description: Search and download external OpenSubtitles subtitle sidecars for movies and episodes already organized with Plex or Jellyfin TMDB provider-ID tags. Use to fetch missing subtitle languages or refresh subtitle files independently of organizing and artwork.
 ---
 

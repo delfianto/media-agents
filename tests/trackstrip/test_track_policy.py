@@ -270,6 +270,10 @@ def test_classify_group_missing_size_data_not_dropped() -> None:
         (None, frozenset({"eng"}), "eng"),
         ("und", frozenset({"eng", "jpn"}), "eng"),
         (None, frozenset({"jpn"}), "jpn"),  # anime audio: only jpn in keep-set
+        # A recognized language outside keep_set only reaches here via
+        # keep_all_subs -- must keep its own tag, not collapse to "eng".
+        ("fre", frozenset({"eng"}), "fre"),
+        ("de", frozenset({"eng"}), "de"),
     ],
 )
 def test_resolve_language(lang: str | None, keep_set: frozenset, expected: str) -> None:
@@ -416,6 +420,30 @@ def test_resolved_language_written_on_kept_tracks() -> None:
     result = plan_streams(streams, Policy())
     assert result["keep_audio"][0]["resolved_lang"] == "eng"
     assert result["keep_subtitle"][0]["resolved_lang"] == "eng"
+
+
+def test_keep_all_subs_keeps_every_subtitle_language_but_still_strips_audio() -> None:
+    """Audio-only stripping mode: non-English audio still drops, but no
+    subtitle track is ever dropped, regardless of language/forced/SDH."""
+    streams = [
+        video(),
+        audio(1, language="eng"),
+        audio(2, language="ger"),
+        sub(3, language="eng"),
+        sub(4, language="fre"),
+        sub(5, language="ger", hearing_impaired=True),
+    ]
+    result = plan_streams(streams, Policy(keep_all_subs=True, drop_sdh_subs=True))
+
+    kept_audio_langs = {t["language"] for t in result["keep_audio"]}
+    assert kept_audio_langs == {"eng"}
+
+    kept_sub_indices = {t["index"] for t in result["keep_subtitle"]}
+    assert kept_sub_indices == {3, 4, 5}
+    assert not result["drop_subtitle"]
+
+    resolved = {t["index"]: t["resolved_lang"] for t in result["keep_subtitle"]}
+    assert resolved == {3: "eng", 4: "fre", 5: "ger"}
 
 
 # --- from_mkvmerge_track: codec_id normalization ---------------------------

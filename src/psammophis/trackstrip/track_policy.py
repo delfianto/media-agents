@@ -45,6 +45,7 @@ class Policy:
     drop_audio_codecs: frozenset = frozenset()  # e.g. {"dts"}: drop regardless of language
     single_audio_track: bool = False  # keep only one audio track per file (see _trim_to_one_audio)
     drop_sdh_subs: bool = False  # drop SDH subtitles when a plain sibling survives (see is_sdh)
+    keep_all_subs: bool = False  # keep every subtitle track regardless of language (audio-only)
 
     # Default (non-anime) keep sets.
     default_audio_langs: frozenset = frozenset({"eng"})
@@ -189,11 +190,19 @@ def resolve_language(lang, keep_set):
     tags map to their ISO 639-2 code regardless of source form ('en'/'eng',
     'ja'/'jpn'); anything blank or otherwise unresolved falls back to the
     policy's primary language for that track type (English, unless the only
-    option is Japanese -- i.e. anime audio)."""
+    option is Japanese -- i.e. anime audio). A recognized language outside
+    keep_set can reach here two ways -- keep_all_subs (every subtitle
+    survives regardless of language) or a forced subtitle kept via
+    keep_forced_subs despite not matching subtitle_langs -- and either way
+    its own tag is kept rather than clobbered to English (a forced French
+    subtitle kept under an eng-only keep_set should resolve to "fre", not
+    silently relabel itself "eng")."""
     if langs.is_english(lang):
         return "eng"
     if langs.is_japanese(lang):
         return "jpn"
+    if not langs.is_unknown(lang):
+        return langs.base_subtag(lang)
     if "eng" in keep_set:
         return "eng"
     return sorted(keep_set)[0] if keep_set else "eng"
@@ -228,6 +237,9 @@ def decide_keep(track, policy: Policy, audio_langs, subtitle_langs):
     """Return (keep: bool, reason: str) for a single audio/subtitle track."""
     codec_type = track["codec_type"]
     lang = track.get("language")
+
+    if codec_type == "subtitle" and policy.keep_all_subs:
+        return True, "keep-all-subs"
 
     if codec_type == "subtitle" and policy.keep_forced_subs and track.get("forced"):
         return True, "forced"

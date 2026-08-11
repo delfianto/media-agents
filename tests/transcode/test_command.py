@@ -38,12 +38,13 @@ def _preset():
     return presets.PRESETS[("1080p", "film")]
 
 
-def _audio(index, language, channels=2, codec_name="truehd", profile=None):
+def _audio(index, language, channels=2, codec_name="truehd", profile=None, channel_layout=None):
     return {
         "index": index,
         "codec_name": codec_name,
         "profile": profile,
         "channels": channels,
+        "channel_layout": channel_layout,
         "bit_rate": None,
         "language": language,
         "title": None,
@@ -171,6 +172,29 @@ def test_audio_language_filter_falls_back_when_nothing_matches():
     cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu", audio_lang="eng")
     assert "0:1" in cmd  # kept anyway via the fallback, not dropped to silence
     assert cmd.count("libopus") == 1
+
+
+def test_side_channel_layout_gets_relabeled_for_libopus():
+    # libopus's mapping-family table rejects ffprobe's positional-qualified
+    # layout names outright ("Invalid channel layout ... for specified
+    # mapping family -1", confirmed against a real DTS-HD MA 5.1(side)
+    # track) -- channelmap must relabel it to the bare name it accepts.
+    probed = _probed(audio=[_audio(1, "eng", channels=6, channel_layout="5.1(side)")])
+    cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu")
+    assert "-filter:a:0" in cmd
+    assert cmd[cmd.index("-filter:a:0") + 1] == "channelmap=channel_layout=5.1"
+
+
+def test_plain_channel_layout_is_not_filtered():
+    probed = _probed(audio=[_audio(1, "eng", channels=2, channel_layout="stereo")])
+    cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu")
+    assert "-filter:a:0" not in cmd
+
+
+def test_missing_channel_layout_is_not_filtered():
+    probed = _probed(audio=[_audio(1, "eng", channels=6, channel_layout=None)])
+    cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu")
+    assert "-filter:a:0" not in cmd
 
 
 def test_subtitle_language_filter_only_maps_matching_tracks():

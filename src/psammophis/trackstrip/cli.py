@@ -51,6 +51,7 @@ def _policy_from_args(args):
         drop_audio_codecs=drop_codecs,
         single_audio_track=args.single_audio_track,
         drop_sdh_subs=args.drop_sdh,
+        keep_all_subs=args.keep_all_subs,
     )
 
 
@@ -88,6 +89,12 @@ def add_policy_args(p):
         help="Drop SDH subtitle tracks when a plain (non-SDH) sibling of the same "
         "language survives; detected via disposition flag, title, or byte-size "
         "heuristic when neither is present",
+    )
+    p.add_argument(
+        "--keep-all-subs",
+        action="store_true",
+        help="Keep every subtitle track regardless of language (audio-only "
+        "stripping) - overrides the language/forced/SDH subtitle policy entirely",
     )
     p.add_argument(
         "--drop-audio-codec",

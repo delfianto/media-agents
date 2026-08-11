@@ -31,7 +31,7 @@ from psammophis.runtime.filesystem import (
 from psammophis.runtime.signals import CancellationRequested
 
 from . import command as command_mod
-from . import langfilter, nvencc_cmd
+from . import degrain, langfilter, nvencc_cmd
 
 DECODE_SPOT_CHECK_SECONDS = 3
 
@@ -524,9 +524,25 @@ def transcode_one(
 
     nvencc_ok = av1_backend.nvencc_available()
     grain: GrainMeasurement | None = None
-    if grain_routing and av1_backend.grain_routing_applies(
-        backend_pref, video, gpu_index, nvencc_ok
-    ):
+    is_degrain = backend_pref == degrain.DEGRAIN_BACKEND
+
+    if is_degrain:
+        # A separate, explicit-opt-in-only path (never chosen by 'auto') --
+        # see degrain.py's module docstring for why it's kept fully apart
+        # from choose_backend/choose_encode_engine's shared decision logic.
+        _emit_phase(on_phase, "select-backend", "started")
+        try:
+            degrain.check_supported(video)
+            if gpu_index is None:
+                raise ValueError("nvenc-degrain requested but no AV1-capable GPU is available")
+        except ValueError as exc:
+            _emit_phase(on_phase, "select-backend", "failed")
+            return TranscodeResult(str(rel), "error", str(exc)), probed
+        _emit_phase(on_phase, "select-backend", "succeeded")
+        backend = engine = degrain.DEGRAIN_BACKEND
+        # Informational only here (unlike the auto-routing case below, this
+        # backend was already explicitly chosen) -- reported in the result
+        # label so it's visible how grainy the source actually was.
         _emit_phase(on_phase, "measure-grain", "started")
         try:
             grain = measure_grain(abs_path, probed["format"].get("duration"))
@@ -534,26 +550,77 @@ def transcode_one(
             _emit_phase(on_phase, "measure-grain", "failed")
             return TranscodeResult(str(rel), "error", f"grain measurement failed: {exc}"), probed
         _emit_phase(on_phase, "measure-grain", "succeeded")
-    _emit_phase(on_phase, "select-backend", "started")
-    try:
-        backend = av1_backend.choose_backend(
-            video,
-            backend_pref,
-            gpu_index,
-            nvencc_ok=nvencc_ok,
-            grain_score=grain.score if grain else None,
-            grain_threshold=grain_threshold,
-        )
-        engine = av1_backend.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
-    except ValueError as exc:
-        _emit_phase(on_phase, "select-backend", "failed")
-        return TranscodeResult(str(rel), "error", str(exc)), probed
-    _emit_phase(on_phase, "select-backend", "succeeded")
+    else:
+        if grain_routing and av1_backend.grain_routing_applies(
+            backend_pref, video, gpu_index, nvencc_ok
+        ):
+            _emit_phase(on_phase, "measure-grain", "started")
+            try:
+                grain = measure_grain(abs_path, probed["format"].get("duration"))
+            except Exception as exc:
+                _emit_phase(on_phase, "measure-grain", "failed")
+                return (
+                    TranscodeResult(str(rel), "error", f"grain measurement failed: {exc}"),
+                    probed,
+                )
+            _emit_phase(on_phase, "measure-grain", "succeeded")
+
+        _emit_phase(on_phase, "select-backend", "started")
+        try:
+            backend = av1_backend.choose_backend(
+                video,
+                backend_pref,
+                gpu_index,
+                nvencc_ok=nvencc_ok,
+                grain_score=grain.score if grain else None,
+                grain_threshold=grain_threshold,
+            )
+            engine = av1_backend.choose_encode_engine(backend, video, nvencc_ok=nvencc_ok)
+        except ValueError as exc:
+            _emit_phase(on_phase, "select-backend", "failed")
+            return TranscodeResult(str(rel), "error", str(exc)), probed
+        _emit_phase(on_phase, "select-backend", "succeeded")
 
     hdr = colorinfo.is_hdr(video)
     preset = presets.select_preset(video["height"], profile, hdr)
     svt_implementation = detect_svt_implementation() if backend == "cpu" else None
     if not execute:
+        if is_degrain:
+            assert gpu_index is not None  # confirmed above when backend == degrain.DEGRAIN_BACKEND
+            cap_bps = (
+                presets.max_bitrate_bps(probed, max_bitrate_fraction)
+                if max_bitrate_fraction is not None
+                else None
+            )
+            steps = [
+                " ".join(degrain.build_denoise_command(abs_path, video, "<denoised.mkv>")),
+                " ".join(
+                    degrain.build_pregrain_encode_command(
+                        "<denoised.mkv>", "<pregrain.mkv>", preset, gpu_index, video, cap_bps
+                    )
+                ),
+                " ".join(degrain.build_diff_command(abs_path, "<denoised.mkv>", "<grain.tbl>")),
+                " ".join(
+                    degrain.build_apply_command("<pregrain.mkv>", "<grained.mkv>", "<grain.tbl>")
+                ),
+                " ".join(
+                    degrain.build_mux_command(
+                        abs_path,
+                        "<grained.mkv>",
+                        final_path,
+                        probed,
+                        drop_subtitles,
+                        audio_lang,
+                        subtitle_lang,
+                        single_audio_track,
+                        resolved_cover,
+                    )
+                ),
+            ]
+            detail = " && ".join(steps)
+            if grain is not None:
+                detail = f"[grain={grain.score:.4f}] {detail}"
+            return TranscodeResult(str(rel), "planned", detail), probed
         cmd = build_encode_command(
             abs_path,
             final_path,
@@ -611,46 +678,83 @@ def transcode_one(
     log_path = log_dir / rel.with_suffix(".log")
 
     try:
-        cmd = build_encode_command(
-            abs_path,
-            tmp_path,
-            probed,
-            preset,
-            backend,
-            engine,
-            gpu_index=gpu_index,
-            drop_subtitles=drop_subtitles,
-            audio_lang=audio_lang,
-            subtitle_lang=subtitle_lang,
-            single_audio_track=single_audio_track,
-            max_bitrate_fraction=max_bitrate_fraction,
-            cover_image_path=resolved_cover if engine == "ffmpeg" else None,
-            svt_implementation=svt_implementation,
-        )
-        _emit_phase(on_phase, "encode", "started")
-        try:
-            returncode, tail = stream_process(
-                cmd,
-                log_path,
-                probed["format"].get("duration"),
-                on_progress=on_progress,
-                on_heartbeat=(lambda: on_heartbeat("encode")) if on_heartbeat else None,
-            )
-        except KeyboardInterrupt, SystemExit, CancellationRequested:
-            _emit_phase(on_phase, "encode", "cancelled")
-            raise
-        except Exception:
-            _emit_phase(on_phase, "encode", "failed")
-            raise
-        if returncode != 0:
-            _emit_phase(on_phase, "encode", "failed")
-            tmp_path.unlink(missing_ok=True)
-            tool = "nvencc" if engine == "nvencc" else "ffmpeg"
-            return (
-                TranscodeResult(str(rel), "error", f"{tool} failed ({returncode}): {tail[-1000:]}"),
+        if is_degrain:
+            # Reports its own five phases directly (denoise, nvenc-encode,
+            # grain-diff, grain-apply, mux) via the same on_phase callback --
+            # no outer "encode" wrapper, matching how probe/measure-grain/
+            # select-backend are already flat, sibling phases rather than
+            # nested under one another.
+            assert gpu_index is not None  # confirmed above when backend == degrain.DEGRAIN_BACKEND
+            returncode, tail = degrain.run_pipeline(
+                abs_path,
+                tmp_path,
                 probed,
+                preset,
+                gpu_index,
+                max_bitrate_fraction,
+                drop_subtitles,
+                audio_lang,
+                subtitle_lang,
+                single_audio_track,
+                resolved_cover,
+                log_dir,
+                on_progress=on_progress,
+                on_phase=on_phase,
+                on_heartbeat=on_heartbeat,
             )
-        _emit_phase(on_phase, "encode", "succeeded")
+            if returncode != 0:
+                tmp_path.unlink(missing_ok=True)
+                return (
+                    TranscodeResult(
+                        str(rel),
+                        "error",
+                        f"nvenc-degrain pipeline failed ({returncode}): {tail[-1000:]}",
+                    ),
+                    probed,
+                )
+        else:
+            cmd = build_encode_command(
+                abs_path,
+                tmp_path,
+                probed,
+                preset,
+                backend,
+                engine,
+                gpu_index=gpu_index,
+                drop_subtitles=drop_subtitles,
+                audio_lang=audio_lang,
+                subtitle_lang=subtitle_lang,
+                single_audio_track=single_audio_track,
+                max_bitrate_fraction=max_bitrate_fraction,
+                cover_image_path=resolved_cover if engine == "ffmpeg" else None,
+                svt_implementation=svt_implementation,
+            )
+            _emit_phase(on_phase, "encode", "started")
+            try:
+                returncode, tail = stream_process(
+                    cmd,
+                    log_path,
+                    probed["format"].get("duration"),
+                    on_progress=on_progress,
+                    on_heartbeat=(lambda: on_heartbeat("encode")) if on_heartbeat else None,
+                )
+            except KeyboardInterrupt, SystemExit, CancellationRequested:
+                _emit_phase(on_phase, "encode", "cancelled")
+                raise
+            except Exception:
+                _emit_phase(on_phase, "encode", "failed")
+                raise
+            if returncode != 0:
+                _emit_phase(on_phase, "encode", "failed")
+                tmp_path.unlink(missing_ok=True)
+                tool = "nvencc" if engine == "nvencc" else "ffmpeg"
+                return (
+                    TranscodeResult(
+                        str(rel), "error", f"{tool} failed ({returncode}): {tail[-1000:]}"
+                    ),
+                    probed,
+                )
+            _emit_phase(on_phase, "encode", "succeeded")
 
         if engine == "nvencc" and resolved_cover is not None:
             _emit_phase(on_phase, "cover", "started")
@@ -736,7 +840,9 @@ def transcode_one(
                 rel,
                 on_phase,
             )
-        label = f"{engine}/{backend}/{preset.name}"
+        label = (
+            f"{engine}/{preset.name}" if engine == backend else f"{engine}/{backend}/{preset.name}"
+        )
         if svt_implementation is not None:
             label += f"/{svt_implementation.label}/crf{presets.svt_crf(preset, svt_implementation)}"
         if grain is not None:

@@ -343,6 +343,19 @@ def all_checks() -> list[CheckResult]:
                 "(github.com/quietvoid/hdr10plus_tool)"
             ),
         ),
+        check_binary(
+            "grav1synth",
+            "transcode",
+            "grav1synth",
+            required=False,
+            install_hint=(
+                "optional -- only needed for --backend nvenc-degrain (denoise + nvenc + "
+                "grain reinjection for grainy SDR/HDR10 sources). Not a standard package; "
+                "build from .agents/vendor-patches/grav1synth/README.md (upstream "
+                "rust-av/grav1synth plus two local patches fixing an av1_nvenc-specific "
+                "corruption bug upstream doesn't have yet)"
+            ),
+        ),
         check_python_package(
             "guessit",
             display_name="Python package: guessit",

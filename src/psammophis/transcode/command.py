@@ -118,7 +118,7 @@ def build_command(
             )
         if gpu_index is None:
             raise ValueError("nvenc backend requested but no AV1-capable GPU is available")
-        cmd += _nvenc_video_args(preset, gpu_index, cap_bps)
+        cmd += nvenc_video_args(preset, gpu_index, cap_bps)
     else:
         raise ValueError(f"unknown backend {backend!r}, expected 'cpu' or 'nvenc'")
 
@@ -135,14 +135,14 @@ def build_command(
     if video.get("color_range") in ("tv", "pc"):
         cmd += ["-color_range", video["color_range"]]
 
-    cmd += _audio_args(kept_audio)
-    cmd += _meaningful_stream_metadata_args("v", [video])
-    cmd += _meaningful_stream_metadata_args("a", kept_audio)
-    cmd += _disposition_args("a", len(kept_audio))
+    cmd += audio_args(kept_audio)
+    cmd += meaningful_stream_metadata_args("v", [video])
+    cmd += meaningful_stream_metadata_args("a", kept_audio)
+    cmd += disposition_args("a", len(kept_audio))
 
     if kept_subtitles:
         cmd += ["-c:s", "copy"]
-        cmd += _disposition_args("s", len(kept_subtitles))
+        cmd += disposition_args("s", len(kept_subtitles))
     cmd += ["-c:t", "copy"]
 
     if cover_image_path is not None:
@@ -179,7 +179,7 @@ def cover_art_args(cover_image_path: str | Path, existing_attachment_count: int)
     ]
 
 
-def _disposition_args(stream_type: str, count: int) -> list[str]:
+def disposition_args(stream_type: str, count: int) -> list[str]:
     """Mark the first kept stream of this type as the player's default and
     explicitly clear the rest, so exactly one track auto-selects on
     playback -- rather than leaving it to whatever (possibly stale or
@@ -247,7 +247,7 @@ def _svtav1_video_args(
     return args
 
 
-def _nvenc_video_args(
+def nvenc_video_args(
     preset: presets.Preset, gpu_index: int, max_bitrate_bps: int | None
 ) -> list[str]:
     args = [
@@ -291,15 +291,31 @@ def _nvenc_video_args(
     return args
 
 
-def _audio_args(audio_streams: list[dict]) -> list[str]:
+def _channel_layout_args(stream: dict, index: int) -> list[str]:
+    """libopus's mapping-family table only recognizes bare layout names
+    (e.g. "5.1", the back-surround variant) and rejects ffprobe's
+    positional-qualified ones (e.g. "5.1(side)", common on DTS-HD MA/AC3
+    Blu-ray tracks) with "Invalid channel layout ... for specified mapping
+    family -1" -- confirmed directly against a real DTS-HD MA 5.1(side)
+    track. `channelmap` with only `channel_layout` set relabels the layout
+    metadata without reordering or remixing samples."""
+    layout = stream.get("channel_layout")
+    if not layout or "(" not in layout:
+        return []
+    canonical = layout.split("(", 1)[0]
+    return [f"-filter:a:{index}", f"channelmap=channel_layout={canonical}"]
+
+
+def audio_args(audio_streams: list[dict]) -> list[str]:
     args = []
     for i, stream in enumerate(audio_streams):
         bitrate = presets.opus_bitrate_kbps(stream["channels"])
+        args += _channel_layout_args(stream, i)
         args += [f"-c:a:{i}", "libopus", f"-b:a:{i}", f"{bitrate}k"]
     return args
 
 
-def _meaningful_stream_metadata_args(stream_type: str, streams: list[dict]) -> list[str]:
+def meaningful_stream_metadata_args(stream_type: str, streams: list[dict]) -> list[str]:
     """Restore human-authored identity fields after disabling automatic
     metadata copy. Codec-derived BPS/DURATION/NUMBER_OF_* statistics are
     deliberately not restored because the muxer cannot recalculate them."""

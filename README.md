@@ -169,7 +169,7 @@ Public CLI command names (distinct from the skill names above) are `analyze`,
 
 The skill definitions stay short and operational. Detailed, reusable explanations live in [`notes/`](notes/):
 
-- [`av1-encoding.md`](notes/av1-encoding.md) — current CPU/GPU presets, mainline versus `svt-av1-hdr`, bitrate caps, expected savings, AV1/Opus tradeoffs, the preset-speed investigation behind `film`/`film-fast`, and the `nvenc-degrain` backend (denoise + nvenc + `grav1synth` grain reinjection).
+- [`av1-encoding.md`](notes/av1-encoding.md) — current CPU/GPU presets, mainline versus `svt-av1-hdr`, bitrate caps, expected savings, AV1/Opus tradeoffs, the preset-speed investigation behind `film`/`film-fast` and `anime`/`anime-fast`, and the `nvenc-degrain` backend (denoise + nvenc + `grav1synth` grain reinjection).
 - [`track-filtering.md`](notes/track-filtering.md) — language, anime, commentary, and SDH detection, safety gates, stripping mechanics, `--keep-all-subs`, and space-saving estimates.
 - [`quality-comparison.md`](notes/quality-comparison.md) — comparison pipeline, sampling, metrics, and how to interpret values.
 - [`library-naming.md`](notes/library-naming.md) — Plex/Jellyfin folder, filename, artwork, and NFO conventions.

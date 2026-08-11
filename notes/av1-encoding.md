@@ -10,14 +10,15 @@ The quality target is selected by coded frame height and an explicit content pro
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 2160p film | 5 | 20 | 27 | 0 (VQ) | 10 | 22 |
 | 2160p film-fast | 6 | 20 | 27 | 0 (VQ) | 10 | 22 |
-| 2160p anime | 4 | 22 | 29 | 1 (PSNR) | 4 | 24 |
+| 2160p anime | 5 | 22 | 29 | 1 (PSNR) | 4 | 24 |
+| 2160p anime-fast | 6 | 22 | 29 | 1 (PSNR) | 4 | 24 |
 | 1080p film | 4 | 24 | 31 | 0 (VQ) | 10 | 26 |
 | 1080p anime | 4 | 25 | 32 | 1 (PSNR) | 4 | 27 |
 | 720p film | 5 | 26 | 33 | 0 (VQ) | 8 | 28 |
 | 720p anime | 5 | 27 | 34 | 1 (PSNR) | 4 | 29 |
 | SD film/anime | 6 | 28 | 35 | 0/1 | 6/4 | 30/31 |
 
-CPU uses SVT-AV1 preset 4 for archival work on tiers that haven't been re-validated (1080p/720p/sd, 2160p anime): presets 0–3 cost a large amount of time for diminishing gains, while 5–6 are sensible for lower resolution material. 2160p film was raised to preset 5 (with a `film-fast` option at 6) after the sweep in "Preset-speed investigation" below. Film uses tune 0 (visual quality) and animation uses tune 1 because the psychovisual optimizer can ring on flat-colored anime edges. All presets enable variance boost. Film-grain presets explicitly set `film-grain-denoise=1`, so source noise is removed before encoding and a statistically similar grain signal is synthesized at playback instead of spending bits coding every noisy pixel.
+CPU uses SVT-AV1 preset 4 for archival work on tiers that haven't been re-validated (1080p/720p/sd): presets 0–3 cost a large amount of time for diminishing gains, while 5–6 are sensible for lower resolution material. 2160p film was raised to preset 5 (with a `film-fast` option at 6) and 2160p anime was raised to preset 5 (with an `anime-fast` option at 6) after the sweeps in "Preset-speed investigation" below. Film uses tune 0 (visual quality) and animation uses tune 1 because the psychovisual optimizer can ring on flat-colored anime edges. All presets enable variance boost. Film-grain presets explicitly set `film-grain-denoise=1`, so source noise is removed before encoding and a statistically similar grain signal is synthesized at playback instead of spending bits coding every noisy pixel.
 
 GPU uses `av1_nvenc` at preset p7 with quality-oriented tuning, multipass, spatial/temporal AQ, and `b_ref_mode=middle`. GPU is faster but generally less efficient per bit than SVT, so its CQ is lower (more generous) than the corresponding SVT target. Dolby Vision and HDR10+ use NVEncC when available so dynamic metadata can be copied; otherwise the decision falls back to CPU rather than silently losing it. GPU selection is capability-probed with a real small encode, not inferred from a GPU model-name table.
 
@@ -65,11 +66,53 @@ Findings, consistent across all three clips:
   lower quality. Deliberately not added as a preset. Don't re-add a `film-xfast`
   at 7 (or retest higher presets) without new evidence across multiple titles.
 
-This sweep only covers 2160p film content. It was not extrapolated to 1080p,
-720p, sd, or the anime profile -- those still use their original, unvalidated
-preset=4/5/6 defaults. `av1_presets.select_preset()` raises a clear error rather
-than silently reusing 2160p numbers if `film-fast` is requested for a tier it
-hasn't been calibrated for.
+This sweep only covers 2160p film content. It was not extrapolated to 1080p or
+720p/sd -- those still use their original, unvalidated preset=4/5/6 defaults.
+`av1_presets.select_preset()` raises a clear error rather than silently
+reusing 2160p numbers if `film-fast` is requested for a tier it hasn't been
+calibrated for.
+
+### 2160p anime addendum
+
+The anime profile's own preset=4 default was equally unvalidated. A second
+sweep reused film's methodology on the strength of its own result -- crf fixed
+at 29 (the `svt-av1-hdr` fork's 2160p-anime target), `svt_preset` varied over
+just 5, 6, 7 (not re-testing 2-4, since film's sweep already established that
+lower presets aren't worth their time and this sweep exists to place the
+speed/quality line, not re-litigate it) -- against three 3-minute clips from
+this library's two 4K anime sources: one from *The Ghost in the Shell* (a
+detail-dense, AI-upscaled cyberpunk episode) and two from *Violet Evergarden:
+The Movie* (a dialogue/painterly scene and a later, more dynamic one), chosen
+to span a real range of animation complexity rather than grain level, which
+anime barely has (both sources measured well under the CPU-routing threshold:
+grain scores 0.0071 and 0.0029).
+
+Findings, same shape as film's:
+
+- **Preset 5 was the best bits-per-quality of the three on every clip.**
+  Raised as the new 2160p-anime default, same as film.
+- **Preset 6 is a real, scene-dependent tradeoff.** 7-30% faster than preset 5
+  depending on clip complexity (fastest gain on the busiest clip), at a cost
+  that scales with the same complexity: ~0.04 VMAF / ~0.34 SSIMULACRA2 on the
+  calm dialogue clip, up to ~0.52 VMAF / ~2.2 SSIMULACRA2 on the detail-dense
+  one. Added as `anime-fast` (`--profile anime-fast`) with the same intent as
+  `film-fast`: batch jobs where wall-clock time matters more than the last
+  fraction of quality.
+- **Preset 7 is the same trap film found.** Only a few more percentage points
+  faster than preset 6 (roughly +5-9pp, a much smaller marginal gain than the
+  5-to-6 step), but 8-13% *larger* output than preset 6 on every clip, for
+  flat-to-worse VMAF/SSIMULACRA2 on two of the three. Deliberately not added
+  as a preset, for the same reason `film-xfast` wasn't: don't re-add an
+  `anime-xfast` at 7 (or retest higher presets) without new evidence across
+  multiple titles.
+
+One methodological gap worth naming: unlike film's sweep, this one didn't
+also re-test preset 4 against 5 for anime specifically -- it started directly
+at 5 on the strength of film's already-established 4-vs-5 result. Tune (1 vs
+film's 0) and content type differ enough between the two profiles that this
+is an assumption carried over, not independently re-proven; revisit if a
+future anime encode looks meaningfully different from what preset 4 would
+have produced.
 
 ## Denoise + nvenc + grav1synth: an nvenc-speed alternative to grain-aware CPU routing
 

@@ -162,11 +162,12 @@ Public command names are `analyze`, `artwork`, `compare`, `env-check`,
 
 The skill definitions stay short and operational. Detailed, reusable explanations live in [`notes/`](notes/):
 
-- [`av1-encoding.md`](notes/av1-encoding.md) — current CPU/GPU presets, mainline versus `svt-av1-hdr`, bitrate caps, expected savings, and AV1/Opus tradeoffs.
-- [`track-filtering.md`](notes/track-filtering.md) — language, anime, commentary, and SDH detection, safety gates, stripping mechanics, and space-saving estimates.
+- [`av1-encoding.md`](notes/av1-encoding.md) — current CPU/GPU presets, mainline versus `svt-av1-hdr`, bitrate caps, expected savings, AV1/Opus tradeoffs, the preset-speed investigation behind `film`/`film-fast`, and the `nvenc-degrain` backend (denoise + nvenc + `grav1synth` grain reinjection).
+- [`track-filtering.md`](notes/track-filtering.md) — language, anime, commentary, and SDH detection, safety gates, stripping mechanics, `--keep-all-subs`, and space-saving estimates.
 - [`quality-comparison.md`](notes/quality-comparison.md) — comparison pipeline, sampling, metrics, and how to interpret values.
 - [`library-naming.md`](notes/library-naming.md) — Plex/Jellyfin folder, filename, artwork, and NFO conventions.
 - [`organize-apis.md`](notes/organize-apis.md) — TMDB, OpenSubtitles, and the OpenSubtitles hash request shapes.
+- [`process-cancellation.md`](notes/process-cancellation.md) — the shared `ProcessSupervisor` cancellation/kill-confirmation contract used by every skill that shells out to a long-running process, and a masking bug found and fixed in its exception handling.
 
 These notes deliberately describe portable lessons and current behavior, not one machine's incident diary or a particular library's file names.
 

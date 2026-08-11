@@ -7,7 +7,7 @@ Both clients (`tmdb.py`, `opensubtitles.py`) use stdlib `urllib` and are built d
 - **Auth:** a free API key from an account's Settings -> API page. No subscription, no per-end-user requirement -- this is the whole reason this skill uses TMDB for TV shows too, rather than also integrating TheTVDB (see library-naming.md).
 - **Base URL:** `https://api.themoviedb.org/3`
 - **Search:** `GET /search/movie?query=...&year=...`, `GET /search/tv?query=...&first_air_date_year=...`
-- **Details:** `GET /movie/{id}?append_to_response=external_ids,credits`, `GET /tv/{id}?append_to_response=external_ids`, `GET /tv/{id}/season/{s}/episode/{e}?append_to_response=credits` -- `append_to_response` folds what would otherwise be separate requests (cast/crew, external IDs like the IMDb id) into the one call.
+- **Details:** `GET /movie/{id}?append_to_response=external_ids,credits`, `GET /tv/{id}?append_to_response=external_ids`, `GET /tv/{id}/season/{s}/episode/{e}?append_to_response=credits`, `GET /tv/{id}/season/{s}` (`TmdbClient.season_details()` -- season-level poster art and metadata; no `append_to_response`, since episode credits belong to the episode-details call, not this one) -- `append_to_response` folds what would otherwise be separate requests (cast/crew, external IDs like the IMDb id) into the one call.
 - **Images:** response fields like `poster_path`/`backdrop_path` are *relative* paths (e.g. `/abc123.jpg`); the full image URL is `https://image.tmdb.org/t/p/{size}{path}` (`tmdb.py`'s `image_url()` /`download_image()` do this join -- `organize.py`'s `Plan` deliberately stores the raw relative path, not a pre-built URL, so there's exactly one place that does this join rather than two copies that could drift).
 
 ## OpenSubtitles.com REST API

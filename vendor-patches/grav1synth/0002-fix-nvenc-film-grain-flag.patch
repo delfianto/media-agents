@@ -1,0 +1,83 @@
+diff --git a/src/parser/sequence.rs b/src/parser/sequence.rs
+index b285f6e..b08771f 100644
+--- a/src/parser/sequence.rs
++++ b/src/parser/sequence.rs
+@@ -170,7 +170,15 @@ impl<const WRITE: bool> BitstreamParser<WRITE> {
+         } else {
+             Vec::new()
+         };
+-        bits(move |input| {
++        // `input` here is the byte slice at function entry, which extends past
++        // this OBU's own payload (it's whatever's left of the packet). `obu_out`
++        // only mirrors the first `self.size` bytes of it, so the byte offset of
++        // any bit parsed inside the closure below must be measured against this
++        // captured length, not assumed to land in whatever is currently the
++        // last element of `obu_out`.
++        let seq_header_payload_len = input.len();
++        let obu_payload_size = self.size; // `self` moves into the closure below
++        let result = bits(move |input| {
+             let ctx = TraceCtx::new(input, obu_bit_offset);
+             let (input, seq_profile) = trace_take_u8(input, ctx, 3, "seq_profile")?;
+             let (input, _still_picture) = trace_bool(input, ctx, "still_picture")?;
+@@ -400,6 +408,19 @@ impl<const WRITE: bool> BitstreamParser<WRITE> {
+             let (input, enable_restoration) = trace_bool(input, ctx, "enable_restoration")?;
+             let (input, color_config) = color_config(input, ctx, seq_profile)?;
+             let fgp_bit_offset = input.1;
++            // Byte offset of the flag within `obu_out`, derived from how many
++            // bytes have actually been consumed so far -- NOT assumed to be
++            // whatever byte currently sits last in the buffer. That
++            // assumption only happens to hold when the flag lands in the
++            // OBU's final declared byte with no trailing padding byte after
++            // it; different (but equally spec-valid) preceding field values
++            // -- seq_level_idx, color description details, operating point
++            // count, etc. -- shift exactly where film_grain_params_present
++            // falls, and different encoders populate those differently. AV1
++            // itself doesn't guarantee the flag falls in the OBU's last byte,
++            // only that trailing_bits() padding follows it somewhere before
++            // the next byte boundary.
++            let fgp_byte_idx = seq_header_payload_len - input.0.len();
+             let (input, film_grain_params_present) =
+                 trace_bool(input, ctx, "film_grain_params_present")?;
+ 
+@@ -408,9 +429,7 @@ impl<const WRITE: bool> BitstreamParser<WRITE> {
+                 // based on whether we are adding or removing film grain.
+                 // We use the bit offset captured BEFORE parsing the flag so
+                 // it points at the flag itself rather than one past it.
+-                obu_out
+-                    .last_mut()
+-                    .unwrap()
++                obu_out[fgp_byte_idx]
+                     .set_bit(7 - fgp_bit_offset, self.incoming_grain_header.is_some());
+                 self.packet_out.extend_from_slice(&obu_out);
+                 debug!(
+@@ -453,7 +472,29 @@ impl<const WRITE: bool> BitstreamParser<WRITE> {
+                     color_config,
+                 },
+             ))
+-        })(input)
++        })(input);
++        // `obu_out` always mirrors the OBU's full declared payload verbatim
++        // in write mode (self.size bytes) -- but the bit-level parser above
++        // only walks as far as its last meaningful field
++        // (film_grain_params_present) and never explicitly consumes the
++        // trailing_bits() padding after it. Left alone, the returned cursor
++        // lands wherever that field happened to end relative to a byte
++        // boundary, which the caller in obu.rs then compares against
++        // obu_out's length to decide whether the OBU's declared size needs
++        // adjusting -- spuriously growing or shrinking a size field whose
++        // actual byte content never changed, purely because of where the
++        // flag happened to fall (verified: this is what turned a one-bit
++        // in-place toggle into a bogus obu_size 15 -> 16 grow, corrupting
++        // every subsequent byte offset in the reconstructed packet).
++        // Forcing the cursor out to the full declared payload here keeps
++        // that comparison honest regardless of bit alignment.
++        if WRITE {
++            return match result {
++                Ok((_, header)) => Ok((&input[obu_payload_size..], header)),
++                Err(e) => Err(e),
++            };
++        }
++        result
+     }
+ }
+ 

@@ -27,7 +27,17 @@ from itertools import pairwise
 from .svt import SvtImplementation
 
 DEFAULT_PROFILE = "film"
-PROFILES = ("film", "anime")
+# "film-fast" is currently calibrated for 2160p only -- see notes/av1-encoding.md's
+# "Preset-speed investigation" section for the crf27, 3-clip x svt_preset{2..7}
+# sweep. It raised 2160p-film's own svt_preset from 4 to 5 (statistically free --
+# indistinguishable VMAF/SSIMULACRA2, 7-12% faster) and added film-fast at
+# svt_preset=6 (a real but small tradeoff: 12-22% faster than film, ~0.3-0.5 VMAF /
+# ~1-2 SSIMULACRA2 cost). svt_preset=7 was measured too and rejected -- worse
+# bits-per-quality than 6, not a real speed tier. None of this is extrapolated to
+# 1080p/720p/sd without the same real-encode validation this repo's own culture
+# requires (see root AGENTS.md's "Code quality" section) -- select_preset() raises
+# a clear error rather than a bare KeyError for the gap.
+PROFILES = ("film", "anime", "film-fast")
 
 # CRF/CQ target a *quality level*, not a *size ceiling* -- on an
 # already-efficiently-encoded source (e.g. a deliberately bitrate-capped
@@ -79,8 +89,39 @@ _ANIME_EXTRA = {**_VARIANCE_BOOST, "sharpness": "1"}
 PRESETS: dict[tuple[str, str], Preset] = {
     ("2160p", "film"): Preset(
         name="2160p-film",
-        description="4K live-action Blu-ray/UHD remux",
-        svt_preset=4,
+        description=(
+            "4K live-action Blu-ray/UHD remux -- svt_preset=5 (raised from the "
+            "historical 4). The preset-speed sweep found 4 vs 5 statistically "
+            "indistinguishable in VMAF/SSIMULACRA2 across a clean, moderate-grain, "
+            "and heavy-grain clip, with 5 running 7-12% faster -- effectively free "
+            "efficiency. See notes/av1-encoding.md's 'Preset-speed investigation'."
+        ),
+        svt_preset=5,
+        crf=20,
+        svt_hdr_crf=27,
+        svt_tune=0,
+        film_grain=10,
+        film_grain_denoise=True,
+        svt_extra=_VARIANCE_BOOST,
+        nvenc_preset="p7",
+        nvenc_tune="uhq",
+        nvenc_cq=22,
+        nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "10"},
+    ),
+    ("2160p", "film-fast"): Preset(
+        name="2160p-film-fast",
+        description=(
+            "4K live-action Blu-ray/UHD remux -- faster CPU preset than 2160p-film "
+            "(svt_preset 6 vs 5), same crf/tune/grain target: 12-22% faster than "
+            "2160p-film for a small, consistent quality cost (~0.3-0.5 VMAF, ~1-2 "
+            "SSIMULACRA2 points). svt_preset=7 was also measured and rejected -- "
+            "10-21% *larger* output than preset 6 for flat-to-worse quality on 2 of "
+            "3 test clips, i.e. strictly worse bits-per-quality, not a real speed "
+            "tradeoff; don't add a 'film-xfast' at 7 without new evidence. Only the "
+            "GPU-vs-CPU speed dial changes here; nvenc fields are identical to "
+            "2160p-film since nvenc has no comparable preset-speed tradeoff to make."
+        ),
+        svt_preset=6,
         crf=20,
         svt_hdr_crf=27,
         svt_tune=0,
@@ -218,7 +259,14 @@ def select_preset(height: int, profile: str, hdr: bool) -> Preset:
     if profile not in PROFILES:
         raise ValueError(f"unknown profile {profile!r}, expected one of {PROFILES}")
     tier = resolution_tier(height)
-    return PRESETS[(tier, profile)]
+    key = (tier, profile)
+    if key not in PRESETS:
+        calibrated_tiers = sorted(t for t, p in PRESETS if p == profile)
+        raise ValueError(
+            f"profile {profile!r} has no preset calibrated for resolution tier {tier!r} "
+            f"(only calibrated for: {calibrated_tiers})"
+        )
+    return PRESETS[key]
 
 
 def svt_crf(preset: Preset, implementation: SvtImplementation) -> int | None:

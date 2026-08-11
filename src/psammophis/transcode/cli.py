@@ -32,7 +32,7 @@ from psammophis.runtime.roots import (
 )
 from psammophis.runtime.signals import CancellationRequested
 
-from . import config, langfilter
+from . import config, degrain, langfilter
 from . import run as run_mod
 
 DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".ts", ".mov"})
@@ -345,10 +345,10 @@ def cmd_run(args):
     )
 
     gpu_index = None
-    if args.backend in ("auto", "nvenc"):
+    if args.backend in ("auto", "nvenc", degrain.DEGRAIN_BACKEND):
         gpu_index = detect_av1_nvenc_gpu()
-        if args.backend == "nvenc" and gpu_index is None:
-            text = "No AV1-capable NVIDIA GPU detected; cannot honor --backend nvenc."
+        if args.backend in ("nvenc", degrain.DEGRAIN_BACKEND) and gpu_index is None:
+            text = f"No AV1-capable NVIDIA GPU detected; cannot honor --backend {args.backend}."
             if context is not None:
                 context.message(text, level="error")
                 context.record_outcome(status="failed", errors=1)
@@ -702,12 +702,18 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
     )
     sp.add_argument(
         "--backend",
-        choices=("auto", "cpu", "nvenc"),
+        choices=("auto", "cpu", "nvenc", degrain.DEGRAIN_BACKEND),
         default="auto",
         help="Encoder backend (default: auto -- nvenc/GPU if an AV1-capable NVIDIA GPU is "
         "found, else cpu/libsvtav1). Dolby Vision and HDR10+ on GPU use nvencc (rigaya "
         "NVEnc with libdovi) so RPU/dynamic metadata is preserved; without nvencc, DV "
-        "falls back to cpu. Plain SDR/HDR10 still uses ffmpeg av1_nvenc.",
+        "falls back to cpu. Plain SDR/HDR10 still uses ffmpeg av1_nvenc. "
+        f"'{degrain.DEGRAIN_BACKEND}' is a separate, explicit-only path for grainy SDR/HDR10 "
+        "sources: denoise, encode the clean picture with av1_nvenc, then reinject a "
+        "diff-derived grain table via grav1synth -- nvenc speed with closer-to-cpu grain "
+        "efficiency. Never chosen by auto; requires grav1synth on PATH (see "
+        ".agents/vendor-patches/grav1synth/README.md) and refuses Dolby Vision/HDR10+ "
+        "sources outright rather than silently dropping their metadata.",
     )
     sp.add_argument(
         "--yes",

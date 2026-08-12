@@ -20,6 +20,7 @@ Conventions (see ../../notes/library-naming.md for the full citations):
 """
 
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +58,48 @@ def extract_provider_id(name: str) -> int | None:
     if match is None:
         return None
     return int(match.group(1) or match.group(2))
+
+
+def tmdb_id_from_nfo(video: str | Path) -> int | None:
+    """Read `<uniqueid type="tmdb">` back out of the video's own NFO
+    sidecar (see `artwork.nfo`'s builders). Organized folder/file names no
+    longer carry a `{tmdb-N}` tag, so this is the normal way a tool
+    recovers a title's id on a later run without re-identifying it -- the
+    NFO already exists from whatever `organize`/`artwork --type nfo` pass
+    created it, and always embeds this id."""
+    nfo_path = sidecar_path(video, ".nfo")
+    if not nfo_path.is_file():
+        return None
+    try:
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+    except ET.ParseError:
+        return None
+    for uniqueid in root.findall("uniqueid"):
+        text = (uniqueid.text or "").strip()
+        if uniqueid.get("type") == "tmdb" and text.isdigit():
+            return int(text)
+    return None
+
+
+def resolve_tmdb_id(video: Path, override: int | None = None) -> int | None:
+    """The full precedence chain a tool uses to recover an already-organized
+    title's TMDB id without re-running guessit or a fresh title match: an
+    explicit override, then a `{tmdb-N}`/`[tmdbid-N]` path tag (older
+    libraries, or a hand-tagged file), then the video's own NFO sidecar's
+    `<uniqueid type="tmdb">` (the normal path for anything organized since
+    tags were dropped from output names -- see the module docstring).
+    Returns None, rather than guessing, if none of these resolve."""
+    if override is not None:
+        return override
+    tmdb_id = extract_provider_id(video.name)
+    if tmdb_id is None:
+        for parent in video.parents:
+            tmdb_id = extract_provider_id(parent.name)
+            if tmdb_id is not None:
+                break
+    if tmdb_id is None:
+        tmdb_id = tmdb_id_from_nfo(video)
+    return tmdb_id
 
 
 @dataclass(frozen=True)

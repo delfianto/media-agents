@@ -1,5 +1,4 @@
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -52,37 +51,9 @@ class Write:
     embed_cover_into: Path | None = None
 
 
-def _tmdb_id_from_nfo(video: Path) -> int | None:
-    """Read `<uniqueid type="tmdb">` back out of the video's own NFO
-    sidecar. Organized folder/file names no longer carry a `{tmdb-N}` tag
-    (see `naming.py`'s module docstring), so this is the normal way
-    `identify()` recovers a title's id on a later artwork-only run -- the
-    NFO already exists from whatever `organize`/`artwork --type nfo` pass
-    created it, and always embeds this id (see `nfo.py`)."""
-    nfo_path = naming.sidecar_path(video, ".nfo")
-    if not nfo_path.is_file():
-        return None
-    try:
-        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
-    except ET.ParseError:
-        return None
-    for uniqueid in root.findall("uniqueid"):
-        text = (uniqueid.text or "").strip()
-        if uniqueid.get("type") == "tmdb" and text.isdigit():
-            return int(text)
-    return None
-
-
 def identify(video: Path, tmdb_id_override: int | None = None) -> MediaIdentity:
     episode_match = _EPISODE_RE.search(video.stem)
-    tmdb_id = tmdb_id_override or naming.extract_provider_id(video.name)
-    if tmdb_id is None:
-        for parent in video.parents:
-            tmdb_id = naming.extract_provider_id(parent.name)
-            if tmdb_id is not None:
-                break
-    if tmdb_id is None:
-        tmdb_id = _tmdb_id_from_nfo(video)
+    tmdb_id = naming.resolve_tmdb_id(video, tmdb_id_override)
     if tmdb_id is None:
         raise ArtworkError(
             f"no TMDB provider tag found for {video} (checked the path and its NFO sidecar)"

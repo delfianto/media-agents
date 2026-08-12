@@ -6,6 +6,7 @@ from psammophis.medialib.walk import walk_media_files
 from psammophis.runtime.context import AppContext
 from psammophis.runtime.events import ItemCompleted, ItemStarted, PhaseCompleted, PhaseStarted
 
+from . import embed as embed_mod
 from .config import ConfigError, load_config
 from .core import VIDEO_EXTENSIONS, SubtitleError, build_plans, execute
 from .opensubtitles import OpenSubtitlesClient, OpenSubtitlesError
@@ -25,6 +26,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--filter", help="Only relative paths containing this substring")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--embed",
+        action="store_true",
+        help="After downloading, also mux each subtitle into its video as a real track "
+        "(via mkvmerge -- mkvedit alone can't add a new track, only edit existing ones)",
+    )
+    parser.add_argument(
+        "--no-embed-default",
+        action="store_true",
+        help="With --embed, don't mark the newly embedded track as the default subtitle "
+        "(default: it becomes default, clearing the flag from whatever was default before)",
+    )
     parser.add_argument("--yes", action="store_true")
     return parser
 
@@ -113,6 +126,31 @@ def main(argv: list[str] | None = None, context: AppContext | None = None) -> in
                             status="succeeded",
                         )
                     active_phase = "plan"
+                    if args.embed and result in ("downloaded", "skipped (already exists)"):
+                        if emitter is not None:
+                            emitter.emit(PhaseStarted, phase="embed", item=str(video))
+                        active_phase = "embed"
+                        embed_result = embed_mod.embed(
+                            video,
+                            plan.destination,
+                            plan.language,
+                            yes=True,
+                            make_default=not args.no_embed_default,
+                        )
+                        print(f"    [{embed_result.status.upper()}] {embed_result.detail}")
+                        if embed_result.status == "error":
+                            errors += 1
+                        elif embed_result.status == "embedded":
+                            changed += 1
+                            item_changed += 1
+                        if emitter is not None:
+                            emitter.emit(
+                                PhaseCompleted,
+                                phase="embed",
+                                item=str(video),
+                                status="failed" if embed_result.status == "error" else "succeeded",
+                            )
+                        active_phase = "plan"
                 else:
                     print(f"{video}\n    subtitle [{plan.language}]: {plan.destination}")
                     planned += 1

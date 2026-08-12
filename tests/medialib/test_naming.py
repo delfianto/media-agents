@@ -117,3 +117,55 @@ def test_sidecar_and_artwork_paths():
 )
 def test_extract_provider_id(name, expected):
     assert naming.extract_provider_id(name) == expected
+
+
+def test_tmdb_id_from_nfo(tmp_path):
+    video = tmp_path / "Movie (2020)" / "Movie (2020).mkv"
+    video.parent.mkdir()
+    video.with_suffix(".nfo").write_text(
+        '<movie><uniqueid type="tmdb" default="true">555</uniqueid></movie>',
+        encoding="utf-8",
+    )
+    assert naming.tmdb_id_from_nfo(video) == 555
+
+
+def test_tmdb_id_from_nfo_missing_file_returns_none(tmp_path):
+    video = tmp_path / "Movie (2020)" / "Movie (2020).mkv"
+    assert naming.tmdb_id_from_nfo(video) is None
+
+
+def test_tmdb_id_from_nfo_ignores_non_tmdb_uniqueid(tmp_path):
+    video = tmp_path / "Movie (2020)" / "Movie (2020).mkv"
+    video.parent.mkdir()
+    video.with_suffix(".nfo").write_text(
+        '<movie><uniqueid type="imdb">tt1234567</uniqueid></movie>', encoding="utf-8"
+    )
+    assert naming.tmdb_id_from_nfo(video) is None
+
+
+def test_resolve_tmdb_id_prefers_override(tmp_path):
+    video = tmp_path / "Movie {tmdb-1}" / "Movie {tmdb-1}.mkv"
+    assert naming.resolve_tmdb_id(video, override=99) == 99
+
+
+def test_resolve_tmdb_id_prefers_path_tag_over_nfo(tmp_path):
+    video = tmp_path / "Movie {tmdb-1}" / "Movie {tmdb-1}.mkv"
+    video.parent.mkdir()
+    video.with_suffix(".nfo").write_text(
+        '<movie><uniqueid type="tmdb">2</uniqueid></movie>', encoding="utf-8"
+    )
+    assert naming.resolve_tmdb_id(video) == 1
+
+
+def test_resolve_tmdb_id_falls_back_to_nfo(tmp_path):
+    video = tmp_path / "Movie (2020)" / "Movie (2020).mkv"
+    video.parent.mkdir()
+    video.with_suffix(".nfo").write_text(
+        '<movie><uniqueid type="tmdb">555</uniqueid></movie>', encoding="utf-8"
+    )
+    assert naming.resolve_tmdb_id(video) == 555
+
+
+def test_resolve_tmdb_id_none_when_nothing_resolves(tmp_path):
+    video = tmp_path / "Movie (2020)" / "Movie (2020).mkv"
+    assert naming.resolve_tmdb_id(video) is None

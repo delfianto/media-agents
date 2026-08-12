@@ -26,14 +26,11 @@ class SubtitlePlan:
 
 def build_plans(video: Path, languages: tuple[str, ...]) -> list[SubtitlePlan]:
     match = _EPISODE_RE.search(video.stem)
-    tmdb_id = naming.extract_provider_id(video.name)
+    tmdb_id = naming.resolve_tmdb_id(video)
     if tmdb_id is None:
-        for parent in video.parents:
-            tmdb_id = naming.extract_provider_id(parent.name)
-            if tmdb_id is not None:
-                break
-    if tmdb_id is None:
-        raise SubtitleError(f"no TMDB provider tag found for {video}")
+        raise SubtitleError(
+            f"no TMDB provider tag found for {video} (checked the path and its NFO sidecar)"
+        )
     season = int(match.group(1)) if match else None
     episode = int(match.group(2)) if match else None
     return [

@@ -25,3 +25,15 @@ def test_episode_plan_reads_series_tag_and_episode_number():
 def test_missing_provider_tag_is_rejected():
     with pytest.raises(SubtitleError):
         build_plans(Path("/TV/Show/Season 01/Show S01E01.mkv"), ("en",))
+
+
+def test_falls_back_to_nfo_uniqueid_when_no_path_tag(tmp_path):
+    video = tmp_path / "Movie (2020)" / "Movie (2020).mkv"
+    video.parent.mkdir()
+    video.write_bytes(b"")
+    video.with_suffix(".nfo").write_text(
+        '<movie><uniqueid type="tmdb" default="true">555</uniqueid></movie>',
+        encoding="utf-8",
+    )
+    plans = build_plans(video, ("en",))
+    assert plans[0].tmdb_id == 555

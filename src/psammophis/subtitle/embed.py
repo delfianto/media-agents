@@ -5,13 +5,22 @@ attachments that already exist -- it has no way to add a track's payload.
 Adding a genuine new subtitle track needs a real remux via mkvmerge, the
 same family of operation as `trackstrip`'s own backends.
 
-Safety shape follows `mkvedit.runner.apply()` rather than `trackstrip`'s
-root-relative backup-mirror directory: this skill has no root/library
-concept (it operates on whatever `--path` names), so the backup is a plain
-sibling file (`<video>.subtitle-embed.bak`), like `mkvedit`'s
-`<file>.mkvedit.bak`. Temp file -> verify (video/audio intact, one more
-subtitle track than before, duration matches, decodes cleanly at the head)
--> backup -> atomic swap; restore from backup on any post-remux failure.
+Backup *location* follows `mkvedit.runner.apply()` rather than
+`trackstrip`'s root-relative backup-mirror directory: this skill has no
+root/library concept (it operates on whatever `--path` names), so the
+backup is a plain sibling file (`<video>.subtitle-embed.bak`), like
+`mkvedit`'s `<file>.mkvedit.bak`. Temp file -> verify (video/audio intact,
+one more subtitle track than before, duration matches, decodes cleanly at
+the head) -> backup -> atomic swap; restore from backup on any post-remux
+failure.
+
+Backup *mechanism* follows `trackstrip.apply` instead: `mkvmerge` writes
+the embedded result to a separate tmp path and the original is only
+swapped in afterward via `install_verified`, so -- unlike `mkvedit`, which
+edits its target's bytes in place with `mkvpropedit` and therefore needs a
+real copy for the backup to mean anything -- the original here is never
+mutated before the swap. A hardlinked backup is just as safe and skips a
+second full-file copy on top of the remux itself.
 """
 
 import json
@@ -236,7 +245,7 @@ def embed(
             tmp_path.unlink(missing_ok=True)
             return EmbedResult(video, "error", f"verification failed: {detail}")
 
-        stage_backup(video, backup, allow_hardlink=False)
+        stage_backup(video, backup)
         backup_staged = True
         install_verified(video, tmp_path, video)
         return EmbedResult(video, "embedded", "ok", tuple(command), backup)

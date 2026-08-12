@@ -21,6 +21,7 @@ def test_load_config_defaults_with_no_env_file(tmp_path):
     assert cfg.audio_lang == "eng"
     assert cfg.subtitle_lang == "eng"
     assert cfg.max_bitrate_fraction == config.MAX_BITRATE_FRACTION_OF_SOURCE
+    assert cfg.audio_copy is False
 
 
 def test_load_config_reads_values_from_dotenv(tmp_path):
@@ -29,13 +30,27 @@ def test_load_config_reads_values_from_dotenv(tmp_path):
         "TRANSCODE_OUTPUT_DIR=/converted\n"
         "TRANSCODE_AUDIO_LANG=jpn\n"
         "TRANSCODE_SUBTITLE_LANG=all\n"
-        "TRANSCODE_MAX_BITRATE_FRACTION=0.5\n",
+        "TRANSCODE_MAX_BITRATE_FRACTION=0.5\n"
+        "TRANSCODE_AUDIO_COPY=true\n",
     )
     cfg = config.load_config(env_path)
     assert str(cfg.output_dir) == "/converted"
     assert cfg.audio_lang == "jpn"
     assert cfg.subtitle_lang == "all"
     assert cfg.max_bitrate_fraction == 0.5
+    assert cfg.audio_copy is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
+def test_load_config_audio_copy_accepts_falsy_values(tmp_path, value):
+    env_path = _write_env(tmp_path, f"TRANSCODE_AUDIO_COPY={value}\n")
+    assert config.load_config(env_path).audio_copy is False
+
+
+def test_invalid_audio_copy_value_is_rejected(tmp_path):
+    env_path = _write_env(tmp_path, "TRANSCODE_AUDIO_COPY=maybe\n")
+    with pytest.raises(config.ConfigError, match="TRANSCODE_AUDIO_COPY"):
+        config.load_config(env_path)
 
 
 def test_real_environment_overrides_dotenv_file(tmp_path, monkeypatch):

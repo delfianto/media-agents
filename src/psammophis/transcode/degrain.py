@@ -188,12 +188,14 @@ def build_mux_command(
     subtitle_lang: str,
     single_audio_track: bool,
     cover_image_path: str | Path | None,
+    audio_copy: bool = False,
 ) -> list[str]:
     """Final container: video stream-copied from the grain-injected,
     already-fully-encoded file (input 0); audio/subtitles pulled fresh from
     the original source (input 1) and processed exactly like a normal
-    transcode -- same language filtering, Opus re-encode, disposition flags,
-    and metadata handling, via command.py's own builders."""
+    transcode -- same language filtering, Opus re-encode (or stream-copy
+    when `audio_copy`), disposition flags, and metadata handling, via
+    command.py's own builders."""
     kept_audio, _fallback = langfilter.filter_audio(
         probed.get("audio", []), audio_lang, single=single_audio_track
     )
@@ -229,7 +231,7 @@ def build_mux_command(
         "-map_chapters",
         "1",
     ]
-    cmd += command_mod.audio_args(kept_audio)
+    cmd += command_mod.audio_args(kept_audio, audio_copy=audio_copy)
     cmd += command_mod.meaningful_stream_metadata_args("a", kept_audio)
     cmd += command_mod.disposition_args("a", len(kept_audio))
     if kept_subtitles:
@@ -303,6 +305,7 @@ def run_pipeline(
     single_audio_track: bool,
     cover_image_path: Path | None,
     log_dir: Path,
+    audio_copy: bool = False,
     on_progress: StructuredProgressCallback | None = None,
     on_phase: PhaseCallback | None = None,
     on_heartbeat: HeartbeatCallback | None = None,
@@ -400,6 +403,7 @@ def run_pipeline(
                 subtitle_lang,
                 single_audio_track,
                 cover_image_path,
+                audio_copy,
             ),
             log_dir / f"{tmp_path.stem}.mux.log",
             "mux",

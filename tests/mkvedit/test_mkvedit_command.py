@@ -1,6 +1,6 @@
 import pytest
 
-from psammophis.mkvedit.command import Edits, build_command
+from psammophis.mkvedit.command import Edits, build_command, is_cover_only
 from psammophis.mkvedit.model import Attachment, Container, MetadataError, Track
 
 
@@ -89,3 +89,40 @@ def test_title_tags_and_chapters(tmp_path):
 def test_no_mutation_is_rejected(tmp_path):
     with pytest.raises(MetadataError, match="no metadata mutation"):
         build_command(_container(tmp_path), Edits())
+
+
+def test_clear_all_track_names_deletes_only_named_tracks(tmp_path):
+    command = build_command(_container(tmp_path), Edits(clear_all_track_names=True))
+    assert command.count("--delete") == 2
+    for uid in (200, 201):
+        idx = command.index(f"track:={uid}")
+        assert command[idx + 1 : idx + 3] == ["--delete", "name"]
+    for uid in (100, 300, 301):
+        assert f"track:={uid}" not in command
+
+
+def test_clear_all_track_names_combines_with_title(tmp_path):
+    command = build_command(_container(tmp_path), Edits(title="Movie", clear_all_track_names=True))
+    assert "title=Movie" in command
+    assert command.count("--delete") == 2
+
+
+def test_clear_all_track_names_conflicts_with_track_name(tmp_path):
+    with pytest.raises(MetadataError, match="cannot be combined"):
+        build_command(
+            _container(tmp_path),
+            Edits(track_selector="id:1", track_name="Foo", clear_all_track_names=True),
+        )
+
+
+def test_is_cover_only(tmp_path):
+    image = tmp_path / "poster.jpg"
+    assert is_cover_only(Edits(cover=image))
+    assert is_cover_only(Edits(delete_cover=True))
+    assert not is_cover_only(Edits(cover=image, title="Movie"))
+    assert not is_cover_only(Edits(cover=image, track_selector="audio:1", language="en"))
+    assert not is_cover_only(Edits(cover=image, defaults={"audio": "audio:1"}))
+    assert not is_cover_only(Edits(cover=image, clear_all_track_names=True))
+    assert not is_cover_only(Edits(cover=image, tags=tmp_path / "tags.xml"))
+    assert not is_cover_only(Edits(cover=image, chapters=tmp_path / "chapters.xml"))
+    assert not is_cover_only(Edits(title="Movie"))

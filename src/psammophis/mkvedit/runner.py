@@ -13,7 +13,7 @@ from psammophis.runtime.filesystem import (
 )
 from psammophis.runtime.signals import CancellationRequested
 
-from .command import Edits, build_command
+from .command import Edits, build_command, is_cover_only
 from .model import Container, MetadataError, parse_container
 
 Run = Callable[..., subprocess.CompletedProcess[str]]
@@ -108,15 +108,19 @@ def apply(
     current_phase = None
     if not yes:
         return Result(path, "planned", "dry run", tuple(command))
-    backup = backup_path(path, backup_suffix)
-    if path_exists(backup):
-        return Result(path, "error", f"backup already exists: {backup}", tuple(command))
+    skip_backup = is_cover_only(edits)
+    backup: Path | None = None
+    if not skip_backup:
+        backup = backup_path(path, backup_suffix)
+        if path_exists(backup):
+            return Result(path, "error", f"backup already exists: {backup}", tuple(command))
     edit_invoked = False
     try:
-        current_phase = "backup"
-        phase("backup", "started")
-        stage_backup(path, backup, allow_hardlink=False)
-        phase("backup", "succeeded")
+        if backup is not None:
+            current_phase = "backup"
+            phase("backup", "started")
+            stage_backup(path, backup, allow_hardlink=False)
+            phase("backup", "succeeded")
         current_phase = "edit"
         phase("edit", "started")
         edit_invoked = True
@@ -139,7 +143,7 @@ def apply(
         phase("verify", "succeeded")
         current_phase = None
     except KeyboardInterrupt, SystemExit, CancellationRequested:
-        if edit_invoked:
+        if edit_invoked and backup is not None:
             try:
                 restore_from_backup(backup, path)
             except Exception as restore_exc:
@@ -147,7 +151,7 @@ def apply(
                     f"operation was cancelled and restore failed: {restore_exc}; "
                     f"backup remains at {backup}"
                 ) from restore_exc
-        elif path_exists(backup):
+        elif backup is not None and path_exists(backup):
             discard_staged_backup(backup)
         with contextlib.suppress(Exception):
             if current_phase is not None:
@@ -155,7 +159,7 @@ def apply(
         raise
     except Exception as exc:
         if not edit_invoked:
-            if path_exists(backup):
+            if backup is not None and path_exists(backup):
                 discard_staged_backup(backup)
             with contextlib.suppress(Exception):
                 if current_phase is not None:
@@ -165,7 +169,18 @@ def apply(
                 "error",
                 str(exc),
                 tuple(command),
-                backup if path_exists(backup) else None,
+                backup if backup is not None and path_exists(backup) else None,
+            )
+        if backup is None:
+            with contextlib.suppress(Exception):
+                if current_phase is not None:
+                    phase(current_phase, "failed")
+            return Result(
+                path,
+                "error",
+                f"edit failed (no backup was taken for this cover-only edit): {exc}",
+                tuple(command),
+                None,
             )
         with contextlib.suppress(Exception):
             if current_phase is not None:

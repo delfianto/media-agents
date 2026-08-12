@@ -25,6 +25,7 @@ class Edits:
     track_selector: str | None = None
     track_name: str | None = None
     delete_track_name: bool = False
+    clear_all_track_names: bool = False
     language: str | None = None
     flags: dict[str, bool] = field(default_factory=dict)
     defaults: dict[str, str] = field(default_factory=dict)
@@ -36,6 +37,25 @@ class Edits:
     delete_tags: bool = False
     chapters: Path | None = None
     delete_chapters: bool = False
+
+
+def is_cover_only(edits: Edits) -> bool:
+    """True when the edit set touches only the cover attachment -- no track,
+    title, tag, or chapter mutation. The runner (see runner.apply) skips its
+    full-file backup for these: copying an entire multi-GB video first just
+    to swap a few-MB poster attachment is pure overhead, unlike a track/flag
+    edit where the backup is what makes a wrong track selection reversible."""
+    return (edits.cover is not None or edits.delete_cover) and not (
+        edits.title is not None
+        or edits.delete_title
+        or edits.track_selector
+        or edits.clear_all_track_names
+        or bool(edits.defaults)
+        or edits.tags is not None
+        or edits.delete_tags
+        or edits.chapters is not None
+        or edits.delete_chapters
+    )
 
 
 def _track_edit(args: list[str], track: Track, *actions: str) -> None:
@@ -73,11 +93,16 @@ def _validate(edits: Edits) -> None:
     ):
         if path is not None and not path.is_file():
             raise MetadataError(f"{label} file does not exist: {path}")
+    if edits.clear_all_track_names and (edits.track_name is not None or edits.delete_track_name):
+        raise MetadataError(
+            "--clear-all-track-names cannot be combined with --track-name/--delete-track-name"
+        )
     if not any(
         (
             edits.title is not None,
             edits.delete_title,
             has_track_mutation,
+            edits.clear_all_track_names,
             bool(edits.defaults),
             edits.cover is not None,
             edits.delete_cover,
@@ -113,6 +138,11 @@ def build_command(container: Container, edits: Edits) -> list[str]:
         for name, enabled in sorted(edits.flags.items()):
             actions.extend(("--set", f"flag-{name}={int(enabled)}"))
         _track_edit(args, track, *actions)
+
+    if edits.clear_all_track_names:
+        for track in container.tracks:
+            if track.name:
+                _track_edit(args, track, "--delete", "name")
 
     for requested_type, selector in edits.defaults.items():
         selected = select_track(container, selector)

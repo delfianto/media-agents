@@ -24,16 +24,16 @@ def test_movie_paths_plex():
     meta = naming.MovieMeta(title="The Matrix", year=1999, tmdb_id=603)
     folder = naming.movie_folder(meta, "plex", "/Movies")
     video = naming.movie_video_path(meta, "plex", "/Movies", ".mkv")
-    assert folder == Path("/Movies/The Matrix (1999) {tmdb-603}")
-    assert video == folder / "The Matrix (1999) {tmdb-603}.mkv"
+    assert folder == Path("/Movies/The Matrix (1999)")
+    assert video == folder / "The Matrix (1999).mkv"
 
 
 def test_movie_paths_jellyfin():
     meta = naming.MovieMeta(title="The Matrix", year=1999, tmdb_id=603)
     folder = naming.movie_folder(meta, "jellyfin", "/Movies")
     video = naming.movie_video_path(meta, "jellyfin", "/Movies", ".mkv")
-    assert folder == Path("/Movies/The Matrix (1999) [tmdbid-603]")
-    assert video == folder / "The Matrix (1999) [tmdbid-603].mkv"
+    assert folder == Path("/Movies/The Matrix (1999)")
+    assert video == folder / "The Matrix (1999).mkv"
 
 
 def test_movie_paths_unknown_server_raises():
@@ -45,7 +45,7 @@ def test_movie_paths_unknown_server_raises():
 def test_movie_paths_no_year():
     meta = naming.MovieMeta(title="Untitled", year=None, tmdb_id=42)
     folder = naming.movie_folder(meta, "plex", "/Movies")
-    assert folder == Path("/Movies/Untitled {tmdb-42}")
+    assert folder == Path("/Movies/Untitled")
 
 
 def test_episode_paths_plex():
@@ -60,9 +60,9 @@ def test_episode_paths_plex():
     series = naming.series_folder(meta, "plex", "/TV")
     season = naming.season_folder(meta, "plex", "/TV")
     video = naming.episode_video_path(meta, "plex", "/TV", ".mkv")
-    assert series == Path("/TV/Breaking Bad (2008) {tmdb-1396}")
+    assert series == Path("/TV/Breaking Bad (2008)")
     assert season == series / "Season 01"
-    assert video == season / "Breaking Bad - s01e01 - Pilot.mkv"
+    assert video == season / "Breaking Bad - S01E01 - Pilot.mkv"
 
 
 def test_episode_paths_jellyfin():
@@ -76,7 +76,7 @@ def test_episode_paths_jellyfin():
     )
     series = naming.series_folder(meta, "jellyfin", "/TV")
     video = naming.episode_video_path(meta, "jellyfin", "/TV", ".mkv")
-    assert series == Path("/TV/Breaking Bad (2008) [tmdbid-1396]")
+    assert series == Path("/TV/Breaking Bad (2008)")
     assert video == series / "Season 01" / "Breaking Bad (2008) S01E01 Pilot.mkv"
 
 
@@ -85,7 +85,7 @@ def test_episode_paths_no_episode_title():
         series_title="Show", series_year=2020, series_tmdb_id=1, season=2, episode=13
     )
     video = naming.episode_video_path(meta, "plex", "/TV", ".mkv")
-    assert video.name == "Show - s02e13.mkv"
+    assert video.name == "Show - S02E13.mkv"
 
 
 def test_episode_season_padding_double_digit():
@@ -97,9 +97,9 @@ def test_episode_season_padding_double_digit():
 
 
 def test_sidecar_and_artwork_paths():
-    video = Path("/Movies/Foo (2020) {tmdb-1}/Foo (2020) {tmdb-1}.mkv")
-    assert naming.sidecar_path(video, ".nfo") == video.with_name("Foo (2020) {tmdb-1}.nfo")
-    assert naming.subtitle_path(video, "en") == video.with_name("Foo (2020) {tmdb-1}.en.srt")
+    video = Path("/Movies/Foo (2020)/Foo (2020).mkv")
+    assert naming.sidecar_path(video, ".nfo") == video.with_name("Foo (2020).nfo")
+    assert naming.subtitle_path(video, "en") == video.with_name("Foo (2020).en.srt")
     assert naming.poster_path(video.parent) == video.parent / "poster.jpg"
     assert naming.fanart_path(video.parent) == video.parent / "fanart.jpg"
     assert naming.tvshow_nfo_path(video.parent) == video.parent / "tvshow.nfo"

@@ -1,16 +1,19 @@
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from psammophis.medialib import naming
 from psammophis.medialib.tmdb import TmdbClient
+from psammophis.mkvedit.command import Edits as CoverEdits
+from psammophis.mkvedit.runner import apply as embed_cover
 from psammophis.runtime.filesystem import atomic_write_text
 
 from . import nfo
 
 VIDEO_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".avi", ".ts", ".mov", ".wmv"})
-ARTWORK_TYPES = ("all", "poster", "fanart", "still", "nfo")
+ARTWORK_TYPES = ("all", "poster", "fanart", "still", "cover", "nfo")
 _EPISODE_RE = re.compile(r"(?i)\bS(\d{1,3})E(\d{1,4})\b")
 
 
@@ -24,6 +27,8 @@ class TmdbReader(Protocol):
     def tv_details(self, tmdb_id: int) -> dict: ...
 
     def episode_details(self, tv_id: int, season: int, episode: int) -> dict: ...
+
+    def season_details(self, tv_id: int, season: int) -> dict: ...
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,28 @@ class Write:
     destination: Path
     content: str | None = None
     image_path: str | None = None
+    embed_cover_into: Path | None = None
+
+
+def _tmdb_id_from_nfo(video: Path) -> int | None:
+    """Read `<uniqueid type="tmdb">` back out of the video's own NFO
+    sidecar. Organized folder/file names no longer carry a `{tmdb-N}` tag
+    (see `naming.py`'s module docstring), so this is the normal way
+    `identify()` recovers a title's id on a later artwork-only run -- the
+    NFO already exists from whatever `organize`/`artwork --type nfo` pass
+    created it, and always embeds this id (see `nfo.py`)."""
+    nfo_path = naming.sidecar_path(video, ".nfo")
+    if not nfo_path.is_file():
+        return None
+    try:
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+    except ET.ParseError:
+        return None
+    for uniqueid in root.findall("uniqueid"):
+        text = (uniqueid.text or "").strip()
+        if uniqueid.get("type") == "tmdb" and text.isdigit():
+            return int(text)
+    return None
 
 
 def identify(video: Path, tmdb_id_override: int | None = None) -> MediaIdentity:
@@ -55,7 +82,11 @@ def identify(video: Path, tmdb_id_override: int | None = None) -> MediaIdentity:
             if tmdb_id is not None:
                 break
     if tmdb_id is None:
-        raise ArtworkError(f"no TMDB provider tag found for {video}")
+        tmdb_id = _tmdb_id_from_nfo(video)
+    if tmdb_id is None:
+        raise ArtworkError(
+            f"no TMDB provider tag found for {video} (checked the path and its NFO sidecar)"
+        )
     if episode_match is None:
         return MediaIdentity(video, tmdb_id)
     return MediaIdentity(
@@ -127,8 +158,8 @@ def build_plan(identity: MediaIdentity, tmdb: TmdbReader, artwork_type: str) -> 
                     _movie_nfo(details, identity.tmdb_id),
                 )
             )
-        if artwork_type == "still":
-            raise ArtworkError("still artwork is only valid for TV episodes")
+        if artwork_type in ("still", "cover"):
+            raise ArtworkError(f"{artwork_type} artwork is only valid for TV episodes")
         return writes
 
     assert identity.season is not None and identity.episode is not None
@@ -149,6 +180,24 @@ def build_plan(identity: MediaIdentity, tmdb: TmdbReader, artwork_type: str) -> 
                 image_path=episode["still_path"],
             )
         )
+    if artwork_type in ("all", "cover"):
+        season_poster = tmdb.season_details(identity.tmdb_id, identity.season).get("poster_path")
+        poster_path = season_poster or series.get("poster_path")
+        if poster_path:
+            # identity.video.parent is the "Season NN" folder episode files
+            # live in directly (see naming.episode_video_path) -- cache the
+            # downloaded season poster there, dot-prefixed so it's invisible
+            # to Plex/Jellyfin's own scan and this codebase's own
+            # walk_media_files (both skip dot-prefixed entries), then embed
+            # it as this episode's own MKV cover attachment.
+            writes.append(
+                Write(
+                    "cover",
+                    identity.video.parent / ".season-poster.jpg",
+                    image_path=poster_path,
+                    embed_cover_into=identity.video,
+                )
+            )
     if artwork_type in ("all", "nfo"):
         credits = episode.get("credits", {})
         writes.append(
@@ -199,4 +248,14 @@ def execute(writes: list[Write], tmdb: TmdbClient) -> list[str]:
             atomic_write_text(write.destination, write.content)
         elif write.image_path and not tmdb.download_image(write.image_path, write.destination):
             warnings.append(f"{write.kind} download failed: {write.destination}")
+            continue
+        if write.embed_cover_into is not None:
+            # Cover-only edit (see mkvedit.command.is_cover_only): the
+            # runner skips its usual full-file backup, since this is a
+            # small attachment swap, not a track/flag edit worth copying an
+            # entire episode file first.
+            edits = CoverEdits(cover=write.destination)
+            result = embed_cover(write.embed_cover_into, edits, yes=True)
+            if result.status == "error":
+                warnings.append(f"cover embed failed for {write.embed_cover_into}: {result.detail}")
     return warnings

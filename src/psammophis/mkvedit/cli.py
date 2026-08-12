@@ -40,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
     name = parser.add_mutually_exclusive_group()
     name.add_argument("--track-name")
     name.add_argument("--delete-track-name", action="store_true")
+    parser.add_argument(
+        "--clear-all-track-names",
+        action="store_true",
+        help="Delete the name/label on every track that currently has one",
+    )
     parser.add_argument("--language")
     parser.add_argument("--flag", action="append", type=_flag, default=[])
     parser.add_argument("--default-track")
@@ -78,6 +83,7 @@ def _edits(args: argparse.Namespace) -> Edits:
         track_selector=args.track,
         track_name=args.track_name,
         delete_track_name=args.delete_track_name,
+        clear_all_track_names=args.clear_all_track_names,
         language=args.language,
         flags=dict(args.flag),
         defaults=defaults,

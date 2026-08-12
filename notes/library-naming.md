@@ -17,39 +17,67 @@ TheTVDB's v4 API dropped its old no-strings-attached free tier: real usage now n
 
 TMDB has no such catch: a free account and a free API key (Settings -> API) cover both movies and TV shows, with no subscription, no per-end-user requirement, and no usage-based paywall for this scale of use. That's the entire reason this skill only integrates TMDB.
 
-## Plex naming (verified via multiple independent Plex Support/community sources quoting the same syntax)
+## Provider-ID tags: supported syntax, not used in this skill's own output
+
+Both platforms *support* an optional folder/file provider-ID tag for
+disambiguation -- Plex: curly braces, hyphen before the digits
+(`{tmdb-12345}`, also `{tvdb-12345}`/`{imdb-tt1234567}`); Jellyfin: square
+brackets, no hyphen before "tmdbid" itself (`[tmdbid-12345]`, also
+`[imdbid-tt1234567]`/`[tvdbid-12345]`). **Neither platform requires it** --
+both match primarily by folder name + year via their own metadata agent, and
+recommend the tag only as a disambiguation aid for two same-title/year
+entries. This skill stopped emitting it (2026-08) because it adds visual
+noise to every folder/file name for a library that already resolves cleanly
+without it, and it isn't the tool's job to guess whether name+year is
+disambiguation-worthy on a per-title basis.
+
+`naming.py`'s `extract_provider_id`/`_PROVIDER_ID_RE` still recognize this
+syntax -- it's how `parse.py` accepts a *hand-embedded* id in a messy
+**inbox** filename (e.g. `X-Men.2.2003.{tmdb-36658}...`) to skip fuzzy
+title matching when guessit's own search would pick the wrong TMDB entry
+(a real case in this library: TMDB's actual titles for two 2003 films are
+"X2" and "Star Wars", not "X-Men 2"/"Star Wars Episode IV..." -- fuzzy
+matching alone scored those too low to auto-apply). That inbox-embedding
+use is unaffected by dropping the tag from *organized* output -- they're
+different filenames read at different pipeline stages.
+
+Once a title is organized, anything that needs its TMDB id back (`artwork`
+refreshing art later, without re-running guessit or a fresh title match)
+reads it from the NFO sidecar's `<uniqueid type="tmdb">` instead -- see the
+NFO section below. `artwork identify()` tries a path tag first (for
+libraries organized before this change, or a hand-tagged file) and falls
+back to the sidecar NFO.
+
+## Plex naming (verified via multiple independent Plex Support/community sources)
 
 **Movies:**
 ```
-Movies/Movie Title (Year) {tmdb-12345}/Movie Title (Year) {tmdb-12345}.mkv
+Movies/Movie Title (Year)/Movie Title (Year).mkv
 ```
 
 **TV shows:**
 ```
-TV Shows/Series Name (Year) {tmdb-12345}/Season 01/Series Name - s01e01 - Episode Title.mkv
+TV Shows/Series Name (Year)/Season 01/Series Name - S01E01 - Episode Title.mkv
 ```
 
-- Provider-ID tag: curly braces, hyphen before the digits -- `{tmdb-12345}`, `{tvdb-12345}`, or `{imdb-tt1234567}`. Square brackets do **not** work here; it must be `{}`.
-- The tag goes on the folder (applies to every file inside, and guarantees a unique folder name even for two movies that happen to share a title/year); Plex also accepts it on the file name, so this skill sets it on both for a movie, matching the folder-name-equals-file-name-minus-extension convention both platforms otherwise share.
 - Season folders: `Season 01`, `Season 02`, ... zero-padded to two digits. `Season 00` (or `/Specials`) for specials.
-- Episode files carry **no** ID tag of their own -- only the series folder does. The `- s01e01 -` pattern (lowercase s/e, hyphen-separated) is what Plex's episode matcher looks for; the episode title suffix is optional.
+- The `- S01E01 -` pattern (capital S/E, hyphen-separated) is what this library's Plex instance is matched against; the episode title suffix is optional.
 
 ## Jellyfin naming (verified via jellyfin.org's own docs)
 
 **Movies:**
 ```
-Movies/Movie Title (Year) [tmdbid-12345]/Movie Title (Year) [tmdbid-12345].mkv
+Movies/Movie Title (Year)/Movie Title (Year).mkv
 ```
 
 **TV shows:**
 ```
-Shows/Series Name (Year) [tmdbid-12345]/Season 01/Series Name (Year) S01E01 Episode Title.mkv
+Shows/Series Name (Year)/Season 01/Series Name (Year) S01E01 Episode Title.mkv
 ```
 
-- Provider-ID tag: square brackets, **no** hyphen before the digits -- `[tmdbid-12345]` uses a hyphen between the key and id (`tmdbid-12345`), but the key itself has no separator from "tmdb" (`tmdbid`, not `tmdb id`). Also supports `[imdbid-tt1234567]` and `[tvdbid-12345]`.
-- Jellyfin's own docs are explicit: "the video files within a folder should have the same name as the folder" -- so, same as Plex, the tag goes on both the movie's folder and its file.
+- Jellyfin's own docs are explicit: "the video files within a folder should have the same name as the folder" -- same as Plex, the movie file matches its folder name exactly.
 - Season folders: `Season 01`, `Season 02`, ... **never** abbreviated to `S01`; zero-padded so every entry has the same digit count.
-- Episode files: `Series Name (Year) S01E01 Episode Title.ext` -- no dashes, space-separated, uppercase S/E. No ID tag on the episode file itself (same rule as Plex -- only the series folder carries it).
+- Episode files: `Series Name (Year) S01E01 Episode Title.ext` -- no dashes, space-separated, uppercase S/E.
 - Multi-episode files (`S01E01-E02.mkv`) are read as one entry combining both episodes' metadata; Jellyfin's docs recommend splitting them with MKVToolNix instead. This skill's `parse.py` takes the *first* episode number from a multi-episode guessit result rather than attempting a split -- out of scope for v1.
 
 ## NFO metadata (Kodi-compatible; both Plex and Jellyfin read it)

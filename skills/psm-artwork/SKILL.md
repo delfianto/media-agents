@@ -1,21 +1,32 @@
 ---
 name: psm-artwork
-description: Fetch or refresh posters, fanart, episode stills, and Kodi-compatible NFO metadata from TMDB for media already organized with Plex or Jellyfin provider-ID tags. Use when artwork or NFO sidecars are missing or stale, independently of media identification and renaming.
+description: Fetch or refresh posters, fanart, episode stills, season-poster episode covers, and Kodi-compatible NFO metadata from TMDB for already-organized media. Use when artwork or NFO sidecars are missing or stale, independently of media identification and renaming.
 ---
 
 # Artwork
 
-Require an already-organized path containing `{tmdb-N}` or `[tmdbid-N]`. Do not run
-guessit or perform a fresh title match. Use `--tmdb-id N` only for one legacy file
-without a provider tag.
+Requires an already-organized path -- identification never runs guessit or a fresh
+title match. A title's TMDB id is resolved, in order: a `{tmdb-N}`/`[tmdbid-N]` path
+tag if present (older libraries, or a hand-tagged file -- `organize` no longer writes
+this tag into folder/file names, see
+[`library-naming.md`](../../notes/library-naming.md)), then the video's own NFO
+sidecar's `<uniqueid type="tmdb">` (the normal path for anything organized since).
+Use `--tmdb-id N` only for one legacy file with neither.
 
 ```bash
 .agents/run.sh artwork --path /library/Movies --type all
 .agents/run.sh artwork --path /library/movie.mkv --type poster --yes
 ```
 
-`--type` accepts `all`, `poster`, `fanart`, `still`, or `nfo`; `still` is episode-only.
-Every run is dry-run unless `--yes` is present.
+`--type` accepts `all`, `poster`, `fanart`, `still`, `cover`, or `nfo`; `still` and
+`cover` are episode-only. Every run is dry-run unless `--yes` is present.
+
+`cover` fetches the *episode's own season* poster from TMDB (falling back to the
+show's main poster if that season has none) and embeds it as the episode file's MKV
+cover attachment -- a real Matroska attachment change via `mkvedit`'s cover path, not
+another `poster.jpg` sidecar. This replaces whatever cover attachment the file
+already carries (a leftover scene-release poster is common). Movie files aren't
+touched by `cover` -- point `mkvedit --cover` at a movie directly if it needs one.
 
 Configure `ARTWORK_TMDB_API_KEY` or shared `TMDB_API_KEY`, with optional
 `ARTWORK_SERVER` and `ARTWORK_USER_AGENT`. See

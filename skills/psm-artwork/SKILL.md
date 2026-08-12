@@ -18,15 +18,15 @@ Use `--tmdb-id N` only for one legacy file with neither.
 .agents/run.sh artwork --path /library/movie.mkv --type poster --yes
 ```
 
-`--type` accepts `all`, `poster`, `fanart`, `still`, `cover`, or `nfo`; `still` and
-`cover` are episode-only. Every run is dry-run unless `--yes` is present.
+`--type` accepts `all`, `poster`, `fanart`, `still`, `cover`, or `nfo`; `still` is
+episode-only, `cover` works for both. Every run is dry-run unless `--yes` is present.
 
-`cover` fetches the *episode's own season* poster from TMDB (falling back to the
-show's main poster if that season has none) and embeds it as the episode file's MKV
-cover attachment -- a real Matroska attachment change via `mkvedit`'s cover path, not
-another `poster.jpg` sidecar. This replaces whatever cover attachment the file
-already carries (a leftover scene-release poster is common). Movie files aren't
-touched by `cover` -- point `mkvedit --cover` at a movie directly if it needs one.
+`cover` embeds the title's own poster as the video file's MKV cover attachment -- a
+real Matroska attachment change via `mkvedit`'s cover path, not another `poster.jpg`
+sidecar -- replacing whatever cover attachment the file already carries (a leftover
+scene-release poster is common). For an episode, it's the *episode's own season*
+poster (falling back to the show's main poster if that season has none); for a
+movie, the movie's own poster.
 
 **`all` no longer includes `still` for episodes -- `cover` (the season poster,
 embedded) is the default per-episode artwork now, not a separate per-episode

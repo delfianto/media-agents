@@ -82,8 +82,9 @@ def test_identify_raises_when_no_tag_and_no_nfo(tmp_path):
     [
         ("poster", ["poster"]),
         ("fanart", ["fanart"]),
+        ("cover", ["cover"]),
         ("nfo", ["nfo"]),
-        ("all", ["poster", "fanart", "nfo"]),
+        ("all", ["poster", "fanart", "cover", "nfo"]),
     ],
 )
 def test_movie_artwork_type_selection(kind, expected):
@@ -96,9 +97,14 @@ def test_still_rejected_for_movie():
         build_plan(MediaIdentity(Path("/Movie/file.mkv"), 10), FakeTmdb(), "still")
 
 
-def test_cover_rejected_for_movie():
-    with pytest.raises(ArtworkError):
-        build_plan(MediaIdentity(Path("/Movie/file.mkv"), 10), FakeTmdb(), "cover")
+def test_movie_cover_embeds_poster_into_the_movie_file():
+    video = Path("/Movie/file.mkv")
+    plan = build_plan(MediaIdentity(video, 10), FakeTmdb(), "cover")
+    write = plan[0]
+    assert write.kind == "cover"
+    assert write.image_path == "/poster.jpg"
+    assert write.embed_cover_into == video
+    assert write.destination == video.parent / ".movie-poster.jpg"
 
 
 def _episode_identity():

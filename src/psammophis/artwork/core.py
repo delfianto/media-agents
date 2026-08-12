@@ -121,6 +121,20 @@ def build_plan(identity: MediaIdentity, tmdb: TmdbReader, artwork_type: str) -> 
                     image_path=details["backdrop_path"],
                 )
             )
+        if artwork_type in ("all", "cover") and details.get("poster_path"):
+            # Cache the poster separately from the "poster" sidecar above
+            # (dot-prefixed, invisible to Plex/Jellyfin's own scan and this
+            # codebase's own walk_media_files) rather than reusing
+            # poster.jpg directly, so `--type cover` alone works even when
+            # `--type poster` wasn't also requested.
+            writes.append(
+                Write(
+                    "cover",
+                    identity.video.parent / ".movie-poster.jpg",
+                    image_path=details["poster_path"],
+                    embed_cover_into=identity.video,
+                )
+            )
         if artwork_type in ("all", "nfo"):
             writes.append(
                 Write(
@@ -129,8 +143,8 @@ def build_plan(identity: MediaIdentity, tmdb: TmdbReader, artwork_type: str) -> 
                     _movie_nfo(details, identity.tmdb_id),
                 )
             )
-        if artwork_type in ("still", "cover"):
-            raise ArtworkError(f"{artwork_type} artwork is only valid for TV episodes")
+        if artwork_type == "still":
+            raise ArtworkError("still artwork is only valid for TV episodes")
         return writes
 
     assert identity.season is not None and identity.episode is not None

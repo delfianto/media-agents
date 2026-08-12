@@ -5,7 +5,7 @@ from psammophis.mkvedit.command import Edits
 from psammophis.mkvedit.runner import apply
 
 
-def _json():
+def _json(covers=()):
     return json.dumps(
         {
             "tracks": [
@@ -15,7 +15,7 @@ def _json():
                     "properties": {"uid": 100, "default_track": True},
                 }
             ],
-            "attachments": [],
+            "attachments": list(covers),
         }
     )
 
@@ -75,6 +75,60 @@ def test_validation_failure_restores_original(tmp_path):
     assert result.status == "error"
     assert "restored" in result.detail
     assert path.read_bytes() == b"original"
+
+
+def test_cover_only_edit_skips_backup(tmp_path):
+    path = tmp_path / "movie.mkv"
+    path.write_bytes(b"original")
+    image = tmp_path / "poster.jpg"
+    image.write_bytes(b"image")
+
+    result = apply(path, Edits(cover=image), yes=True, run=FakeRun())
+
+    assert result.status == "edited"
+    assert result.backup is None
+    assert not (tmp_path / "movie.mkv.mkvedit.bak").exists()
+
+
+def test_cover_plus_other_mutation_still_backs_up(tmp_path):
+    path = tmp_path / "movie.mkv"
+    path.write_bytes(b"original")
+    image = tmp_path / "poster.jpg"
+    image.write_bytes(b"image")
+
+    result = apply(path, Edits(cover=image, title="New"), yes=True, run=FakeRun())
+
+    assert result.status == "edited"
+    assert result.backup is not None
+    assert result.backup.read_bytes() == b"original"
+
+
+def test_cover_only_edit_failure_has_no_backup_to_restore(tmp_path):
+    path = tmp_path / "movie.mkv"
+    path.write_bytes(b"original")
+    image = tmp_path / "poster.jpg"
+    image.write_bytes(b"image")
+
+    class MutatingRun(FakeRun):
+        def __call__(self, args, **kwargs):
+            result = super().__call__(args, **kwargs)
+            if args[0] == "mkvpropedit":
+                path.write_bytes(b"damaged")
+            return result
+
+    result = apply(
+        path,
+        Edits(cover=image),
+        yes=True,
+        run=MutatingRun(invalid_after=True),
+    )
+
+    assert result.status == "error"
+    assert "no backup" in result.detail
+    assert result.backup is None
+    assert not (tmp_path / "movie.mkv.mkvedit.bak").exists()
+    # nothing to roll back to -- the in-place edit's result stands
+    assert path.read_bytes() == b"damaged"
 
 
 def test_in_place_edit_refuses_symlink_source(tmp_path):

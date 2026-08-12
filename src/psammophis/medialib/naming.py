@@ -2,17 +2,21 @@
 conventions. Pure string/path formatting -- no I/O, no network calls.
 
 Conventions (see ../../notes/library-naming.md for the full citations):
-  - Plex:     folder/file provider-ID tag is `{tmdb-12345}` (curly braces,
-              hyphen). Episode files: `Series - s01e01 - Title.ext` (no ID
-              tag on the episode file itself, only on the series folder).
-  - Jellyfin: folder/file provider-ID tag is `[tmdbid-12345]` (square
-              brackets, no hyphen before the digits). Episode files:
-              `Series (Year) S01E01 Title.ext` (space-separated, no dashes).
-
-Both platforms want the provider-ID tag on a movie's *file* name as well as
-its folder (Jellyfin: "video file ... same name as the folder"; Plex:
-tolerates either but the same-name convention is the safe superset), but
-only on the *folder* for a TV series, never on individual episode files.
+  - Movie/series folders and movie files: plain `Title (Year)` -- no
+    `{tmdb-N}`/`[tmdbid-N]` provider-ID tag. Both Plex and Jellyfin match by
+    name+year via their own metadata agent by default; the tag is an
+    optional disambiguation aid neither platform requires, and it makes the
+    on-disk name noisier for no benefit once a library already resolves
+    cleanly. A tool that still needs a title's TMDB id after organizing
+    (e.g. `artwork` refreshing art later) reads it back out of the NFO
+    sidecar's `<uniqueid type="tmdb">` instead of the path -- see
+    `extract_provider_id`'s docstring for the one remaining place a tag in
+    a *source* filename still matters.
+  - Plex episode files:     `Series - S01E01 - Title.ext`
+  - Jellyfin episode files: `Series (Year) S01E01 Title.ext`
+    (episode files never carry the provider-ID tag on either platform --
+    that was true before this change too, only the folder/movie-file tag
+    has been dropped.)
 """
 
 import re
@@ -38,12 +42,17 @@ def _check_server(server: str) -> None:
         raise ValueError(f"unknown media server {server!r}, expected one of {VALID_SERVERS}")
 
 
-def _id_tag(server: str, tmdb_id: int) -> str:
-    _check_server(server)
-    return f"{{tmdb-{tmdb_id}}}" if server == "plex" else f"[tmdbid-{tmdb_id}]"
-
-
 def extract_provider_id(name: str) -> int | None:
+    """Read a `{tmdb-N}`/`[tmdbid-N]` tag out of a filename, if present.
+
+    Organized folder/file names no longer carry this tag (see the module
+    docstring), so this now only matters for an *inbox* filename that
+    already has a known id hand-embedded before a fresh `organize` pass
+    (`parse.py` reads it via guessit's own `tmdb_id` field, which recognizes
+    the same syntax) -- e.g. to resolve a title guessit's fuzzy matcher
+    can't. Kept as a fallback for legacy libraries organized before this
+    change, or anyone who still tags a file by hand.
+    """
     match = _PROVIDER_ID_RE.search(name)
     if match is None:
         return None
@@ -68,10 +77,10 @@ class EpisodeMeta:
 
 
 def movie_base_name(meta: MovieMeta, server: str) -> str:
+    _check_server(server)
     title = sanitize_title(meta.title)
     year_part = f" ({meta.year})" if meta.year else ""
-    tag = _id_tag(server, meta.tmdb_id)
-    return f"{title}{year_part} {tag}"
+    return f"{title}{year_part}"
 
 
 def movie_folder(meta: MovieMeta, server: str, movies_root: str | Path) -> Path:
@@ -84,10 +93,10 @@ def movie_video_path(meta: MovieMeta, server: str, movies_root: str | Path, ext:
 
 
 def series_base_name(meta: EpisodeMeta, server: str) -> str:
+    _check_server(server)
     title = sanitize_title(meta.series_title)
     year_part = f" ({meta.series_year})" if meta.series_year else ""
-    tag = _id_tag(server, meta.series_tmdb_id)
-    return f"{title}{year_part} {tag}"
+    return f"{title}{year_part}"
 
 
 def series_folder(meta: EpisodeMeta, server: str, tv_root: str | Path) -> Path:
@@ -103,14 +112,13 @@ def episode_base_name(meta: EpisodeMeta, server: str) -> str:
     _check_server(server)
     series_title = sanitize_title(meta.series_title)
     episode_title = sanitize_title(meta.episode_title) if meta.episode_title else None
+    sxe = f"S{meta.season:02d}E{meta.episode:02d}"
     if server == "plex":
-        sxe = f"s{meta.season:02d}e{meta.episode:02d}"
         name = f"{series_title} - {sxe}"
         if episode_title:
             name += f" - {episode_title}"
         return name
     # jellyfin
-    sxe = f"S{meta.season:02d}E{meta.episode:02d}"
     year_part = f" ({meta.series_year})" if meta.series_year else ""
     name = f"{series_title}{year_part} {sxe}"
     if episode_title:

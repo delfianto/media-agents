@@ -172,7 +172,7 @@ def build_plan(identity: MediaIdentity, tmdb: TmdbReader, artwork_type: str) -> 
         writes.append(
             Write("fanart", series_dir / "fanart.jpg", image_path=series["backdrop_path"])
         )
-    if artwork_type in ("all", "still") and episode.get("still_path"):
+    if artwork_type == "still" and episode.get("still_path"):
         writes.append(
             Write(
                 "still",

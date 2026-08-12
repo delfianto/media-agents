@@ -128,3 +128,16 @@ def test_episode_cover_falls_back_to_series_poster_when_season_has_none():
 def test_episode_all_includes_cover():
     plan = build_plan(_episode_identity(), FakeTmdb(), "all")
     assert "cover" in [item.kind for item in plan]
+
+
+def test_episode_all_excludes_still():
+    """The season-poster cover replaces the per-episode still in the default
+    bundle -- no need to also fetch/store a screencap. `--type still` stays
+    available standalone for anyone who explicitly wants one."""
+    plan = build_plan(_episode_identity(), FakeTmdb(), "all")
+    assert "still" not in [item.kind for item in plan]
+
+
+def test_episode_still_type_still_available_standalone():
+    plan = build_plan(_episode_identity(), FakeTmdb(), "still")
+    assert [item.kind for item in plan] == ["still"]

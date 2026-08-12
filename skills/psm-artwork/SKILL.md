@@ -28,6 +28,14 @@ another `poster.jpg` sidecar. This replaces whatever cover attachment the file
 already carries (a leftover scene-release poster is common). Movie files aren't
 touched by `cover` -- point `mkvedit --cover` at a movie directly if it needs one.
 
+**`all` no longer includes `still` for episodes -- `cover` (the season poster,
+embedded) is the default per-episode artwork now, not a separate per-episode
+screencap.** Fetching and storing a still is unnecessary work when the season
+poster already serves as the file's own artwork; don't add it back into a
+default/batch pass. `--type still` remains available standalone for anyone who
+explicitly wants the classic episode-screencap sidecar (`<episode>.jpg`) on top
+of that -- just isn't fetched automatically anymore.
+
 Configure `ARTWORK_TMDB_API_KEY` or shared `TMDB_API_KEY`, with optional
 `ARTWORK_SERVER` and `ARTWORK_USER_AGENT`. See
 [`organize` naming conventions](../../notes/library-naming.md) for the

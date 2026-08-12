@@ -252,6 +252,25 @@ def test_build_mux_command_applies_cover_art():
     assert "/poster.jpg" in cmd
 
 
+def test_build_mux_command_audio_copy_stream_copies_instead_of_opus():
+    probed = _probed(audio=[_audio_stream(1)])
+    cmd = degrain.build_mux_command(
+        "/src.mkv",
+        "/tmp/grained.mkv",
+        "/out.mkv",
+        probed,
+        drop_subtitles=False,
+        audio_lang="eng",
+        subtitle_lang="eng",
+        single_audio_track=True,
+        cover_image_path=None,
+        audio_copy=True,
+    )
+    assert cmd[cmd.index("-c:a:0") + 1] == "copy"
+    assert "libopus" not in cmd
+    assert "-b:a:0" not in cmd
+
+
 # ===== check_supported =====
 
 

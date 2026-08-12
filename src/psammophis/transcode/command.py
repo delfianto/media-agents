@@ -2,7 +2,8 @@
 (libsvtav1 or av1_nvenc per `backend`, capped to a fraction of the source's
 own bitrate -- see presets.MAX_BITRATE_FRACTION_OF_SOURCE), the single
 best-quality audio track matching `audio_lang` re-encoded to Opus (falling
-back to every track if none match -- see langfilter.filter_audio), plain
+back to every track if none match -- see langfilter.filter_audio) or
+stream-copied untouched when `audio_copy` is set, plain
 (non-SDH) subtitle tracks matching `subtitle_lang` stream-copied,
 fonts/attachments always kept, chapters retained, meaningful stream metadata
 re-applied explicitly (without stale source codec statistics),
@@ -45,6 +46,7 @@ def build_command(
     audio_lang: str = langfilter.ALL,
     subtitle_lang: str = langfilter.ALL,
     single_audio_track: bool = True,
+    audio_copy: bool = False,
     max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
     cover_image_path: str | Path | None = None,
     svt_implementation: SvtImplementation | None = None,
@@ -135,7 +137,7 @@ def build_command(
     if video.get("color_range") in ("tv", "pc"):
         cmd += ["-color_range", video["color_range"]]
 
-    cmd += audio_args(kept_audio)
+    cmd += audio_args(kept_audio, audio_copy=audio_copy)
     cmd += meaningful_stream_metadata_args("v", [video])
     cmd += meaningful_stream_metadata_args("a", kept_audio)
     cmd += disposition_args("a", len(kept_audio))
@@ -306,9 +308,16 @@ def _channel_layout_args(stream: dict, index: int) -> list[str]:
     return [f"-filter:a:{index}", f"channelmap=channel_layout={canonical}"]
 
 
-def audio_args(audio_streams: list[dict]) -> list[str]:
+def audio_args(audio_streams: list[dict], audio_copy: bool = False) -> list[str]:
+    """Re-encode every kept track to Opus, or stream-copy it bit-exactly with
+    `-c:a copy` when `audio_copy` is set. The channelmap relabel and bitrate
+    selection only apply to the Opus path -- a copied track keeps its bytes
+    and its original channel layout untouched."""
     args = []
     for i, stream in enumerate(audio_streams):
+        if audio_copy:
+            args += [f"-c:a:{i}", "copy"]
+            continue
         bitrate = presets.opus_bitrate_kbps(stream["channels"])
         args += _channel_layout_args(stream, i)
         args += [f"-c:a:{i}", "libopus", f"-b:a:{i}", f"{bitrate}k"]

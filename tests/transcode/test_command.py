@@ -197,6 +197,36 @@ def test_missing_channel_layout_is_not_filtered():
     assert "-filter:a:0" not in cmd
 
 
+def test_audio_copy_stream_copies_instead_of_opus():
+    probed = _probed(audio=[_audio(1, "eng"), _audio(2, "eng")])
+    cmd = command.build_command(
+        "in.mkv", "out.mkv", probed, _preset(), "cpu", single_audio_track=False, audio_copy=True
+    )
+    assert cmd[cmd.index("-c:a:0") + 1] == "copy"
+    assert cmd[cmd.index("-c:a:1") + 1] == "copy"
+    assert "libopus" not in cmd
+    assert "-b:a:0" not in cmd
+
+
+def test_audio_copy_skips_channelmap_relabel():
+    # The channelmap relabel exists only to satisfy libopus's strict mapping
+    # table; a stream-copied track must keep its original channel layout
+    # bytes untouched.
+    probed = _probed(audio=[_audio(1, "eng", channels=6, channel_layout="5.1(side)")])
+    cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu", audio_copy=True)
+    assert "-filter:a:0" not in cmd
+    assert cmd[cmd.index("-c:a:0") + 1] == "copy"
+
+
+def test_audio_copy_still_restores_identity_metadata():
+    audio = _audio(1, "eng")
+    audio["title"] = "Director's mix"
+    probed = _probed(audio=[audio])
+    cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu", audio_copy=True)
+    assert "language=eng" in cmd
+    assert "title=Director's mix" in cmd
+
+
 def test_subtitle_language_filter_only_maps_matching_tracks():
     probed = _probed(
         audio=[_audio(1, "eng")],

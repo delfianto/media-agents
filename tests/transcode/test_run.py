@@ -103,6 +103,44 @@ def test_verify_output_rejects_missing_measured_statistics(monkeypatch, tmp_path
     assert "missing measured track statistics" in detail
 
 
+def test_verify_output_rejects_matching_audio_statistics_when_transcoding(monkeypatch, tmp_path):
+    # A stream-copied track carries byte/BPS counters identical to its source.
+    # Re-encoded Opus never may -- this is the stale-statistics guard tripping
+    # on exactly those copied values, which is the expected (non-copy) verdict.
+    copied = {"BPS-eng": "450000", "NUMBER_OF_BYTES-eng": "500000000"}
+    orig = _probed(_video())
+    orig["audio"][0]["statistics_tags"] = copied
+    new_probed = _probed(
+        _video(statistics_tags={"BPS": "22000000", "NUMBER_OF_BYTES": "11700000000"}),
+        size=12_000_000_000,
+    )
+    new_probed["audio"][0]["statistics_tags"] = copied
+    monkeypatch.setattr(run_mod, "probe_file", lambda path: new_probed)
+    monkeypatch.setattr(run_mod, "_decode_spot_check", lambda path: (True, "ok"))
+    ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv")
+    assert not ok
+    assert "stale source statistics" in detail
+
+
+def test_verify_output_audio_copy_accepts_matching_source_statistics(monkeypatch, tmp_path):
+    # With audio_copy, identical byte/BPS counters are the *correct* outcome --
+    # the copied track is literally the same bytes -- so the stale-check must
+    # stand down, while video + duration + decode checks still run.
+    copied = {"BPS-eng": "450000", "NUMBER_OF_BYTES-eng": "500000000"}
+    orig = _probed(_video())
+    orig["audio"][0]["statistics_tags"] = copied
+    new_probed = _probed(
+        _video(statistics_tags={"BPS": "22000000", "NUMBER_OF_BYTES": "11700000000"}),
+        size=12_000_000_000,
+    )
+    new_probed["audio"][0]["statistics_tags"] = copied
+    monkeypatch.setattr(run_mod, "probe_file", lambda path: new_probed)
+    monkeypatch.setattr(run_mod, "_decode_spot_check", lambda path: (True, "ok"))
+    ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv", audio_copy=True)
+    assert ok
+    assert "smaller" in detail
+
+
 def test_verify_output_fails_when_dv_present_but_color_transfer_lost(monkeypatch, tmp_path):
     # The exact regression this used to let through: nvencc's DV path left
     # color_transfer "unknown" even with RPU/DOVI config intact, and the old

@@ -127,6 +127,16 @@ def test_build_nvencc_command_selects_single_best_eng_audio():
     assert "2?libopus" in cmd
 
 
+def test_build_nvencc_command_audio_copy_stream_copies_instead_of_opus():
+    probed = _probed()
+    cmd = nvencc_cmd.build_nvencc_command("in.mkv", "out.mkv", probed, _preset(), audio_copy=True)
+    assert "--audio-copy" in cmd
+    assert cmd[cmd.index("--audio-copy") + 1] == "1"
+    assert "1?copy" in cmd
+    assert "libopus" not in cmd
+    assert "--audio-bitrate" not in cmd
+
+
 def test_build_nvencc_command_sets_explicit_color_flags_not_metadata_copy():
     # Real bug (Dune Part One remux): "--video-metadata copy" doesn't control
     # bitstream color signaling and dragged forward stale mkvmerge stats tags

@@ -140,7 +140,9 @@ def _decode_spot_check(path: Path, seconds: int = DECODE_SPOT_CHECK_SECONDS) -> 
     return True, "ok"
 
 
-def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
+def verify_output(
+    original_probed: dict, new_path: Path, audio_copy: bool = False
+) -> tuple[bool, str]:
     new_probed = probe_file(new_path)
     if new_probed.get("video") is None:
         return False, "output has no video stream"
@@ -162,24 +164,31 @@ def verify_output(original_probed: dict, new_path: Path) -> tuple[bool, str]:
     if stale_video:
         names = ", ".join(sorted(stale_video))
         return False, f"output AV1 stream carries stale source statistics: {names}"
-    stale_audio = [
-        i
-        for i, stream in enumerate(new_probed.get("audio", []))
-        if any(
-            _copied_codec_statistics(source, stream) for source in original_probed.get("audio", [])
-        )
-    ]
-    if stale_audio:
-        indexes = ", ".join(str(i) for i in stale_audio)
-        return False, f"output Opus stream(s) carry stale source statistics: {indexes}"
-    missing_audio = [
-        i
-        for i, stream in enumerate(new_probed.get("audio", []))
-        if not _has_measured_codec_statistics(stream)
-    ]
-    if missing_audio:
-        indexes = ", ".join(str(i) for i in missing_audio)
-        return False, f"output Opus stream(s) are missing measured track statistics: {indexes}"
+    # For stream-copied audio (--audio-copy) the outer checks above --
+    # "output has no audio" and duration -- still apply, but the stale-
+    # and missing-track-statistics checks do not: a copied track legitimately
+    # carries the exact byte/BPS counters of its source, which is precisely
+    # what the stale check was built to catch on *transcoded* Opus streams.
+    if not audio_copy:
+        stale_audio = [
+            i
+            for i, stream in enumerate(new_probed.get("audio", []))
+            if any(
+                _copied_codec_statistics(source, stream)
+                for source in original_probed.get("audio", [])
+            )
+        ]
+        if stale_audio:
+            indexes = ", ".join(str(i) for i in stale_audio)
+            return False, f"output Opus stream(s) carry stale source statistics: {indexes}"
+        missing_audio = [
+            i
+            for i, stream in enumerate(new_probed.get("audio", []))
+            if not _has_measured_codec_statistics(stream)
+        ]
+        if missing_audio:
+            indexes = ", ".join(str(i) for i in missing_audio)
+            return False, f"output Opus stream(s) are missing measured track statistics: {indexes}"
     if colorinfo.has_dolby_vision(orig_video) and not colorinfo.has_dolby_vision(new_video):
         return False, "source had Dolby Vision but output is missing DOVI configuration record"
     # Checked regardless of Dolby Vision presence -- nvencc's DV path used to
@@ -335,6 +344,7 @@ def build_encode_command(
     single_audio_track: bool,
     max_bitrate_fraction: float | None,
     cover_image_path: Path | None,
+    audio_copy: bool = False,
     svt_implementation: SvtImplementation | None = None,
 ) -> list[str]:
     """Dispatch to ffmpeg (command.py) or nvencc (nvencc_cmd.py).
@@ -356,6 +366,7 @@ def build_encode_command(
             subtitle_lang=subtitle_lang,
             single_audio_track=single_audio_track,
             max_bitrate_fraction=max_bitrate_fraction,
+            audio_copy=audio_copy,
         )
     return command_mod.build_command(
         abs_path,
@@ -368,6 +379,7 @@ def build_encode_command(
         audio_lang=audio_lang,
         subtitle_lang=subtitle_lang,
         single_audio_track=single_audio_track,
+        audio_copy=audio_copy,
         max_bitrate_fraction=max_bitrate_fraction,
         cover_image_path=cover_image_path,
         svt_implementation=svt_implementation,
@@ -436,6 +448,7 @@ def transcode_one(
     audio_lang: str = langfilter.ALL,
     subtitle_lang: str = langfilter.ALL,
     single_audio_track: bool = True,
+    audio_copy: bool = False,
     max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
     output_dir: Path | None = None,
     cover_image_path: Path | None = None,
@@ -614,6 +627,7 @@ def transcode_one(
                         subtitle_lang,
                         single_audio_track,
                         resolved_cover,
+                        audio_copy,
                     )
                 ),
             ]
@@ -633,6 +647,7 @@ def transcode_one(
             audio_lang=audio_lang,
             subtitle_lang=subtitle_lang,
             single_audio_track=single_audio_track,
+            audio_copy=audio_copy,
             max_bitrate_fraction=max_bitrate_fraction,
             cover_image_path=resolved_cover if engine == "ffmpeg" else None,
             svt_implementation=svt_implementation,
@@ -698,6 +713,7 @@ def transcode_one(
                 single_audio_track,
                 resolved_cover,
                 log_dir,
+                audio_copy,
                 on_progress=on_progress,
                 on_phase=on_phase,
                 on_heartbeat=on_heartbeat,
@@ -725,6 +741,7 @@ def transcode_one(
                 audio_lang=audio_lang,
                 subtitle_lang=subtitle_lang,
                 single_audio_track=single_audio_track,
+                audio_copy=audio_copy,
                 max_bitrate_fraction=max_bitrate_fraction,
                 cover_image_path=resolved_cover if engine == "ffmpeg" else None,
                 svt_implementation=svt_implementation,
@@ -788,7 +805,7 @@ def transcode_one(
 
         _emit_phase(on_phase, "verify", "started")
         try:
-            ok, detail = verify_output(probed, tmp_path)
+            ok, detail = verify_output(probed, tmp_path, audio_copy=audio_copy)
         except KeyboardInterrupt, SystemExit, CancellationRequested:
             _emit_phase(on_phase, "verify", "cancelled")
             raise

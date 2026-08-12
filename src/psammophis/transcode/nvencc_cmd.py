@@ -53,12 +53,14 @@ def build_nvencc_command(
     audio_lang: str = langfilter.ALL,
     subtitle_lang: str = langfilter.ALL,
     single_audio_track: bool = True,
+    audio_copy: bool = False,
     max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
     dolby_vision_rpu: str = "copy",
     dolby_vision_profile: str = DEFAULT_AV1_DV_PROFILE,
     dhdr10_info: str = "copy",
 ) -> list[str]:
-    """Build a full NVEncC argv that encodes AV1 + Opus and preserves DV/HDR10+.
+    """Build a full NVEncC argv that encodes AV1 + Opus (or stream-copies
+    audio when `audio_copy`) and preserves DV/HDR10+.
 
     `dolby_vision_rpu` / `dhdr10_info` are either the literal \"copy\" or a
     path to an extracted RPU/JSON file. Flags are only added when the source
@@ -137,14 +139,19 @@ def build_nvencc_command(
     cmd += ["--metadata", "clear", "--audio-metadata", "clear"]
 
     audio_tracks = [stream_to_nvencc_track_number(all_audio, s) for s in kept_audio]
-    # Encode only the kept tracks: copy-select then re-encode those to Opus.
+    # Encode only the kept tracks: copy-select then re-encode those to Opus,
+    # or stream-copy them bit-exactly with --audio-codec N?copy (a supported
+    # NVEncC codec value) when `audio_copy` is set.
     # NVEncC: --audio-copy N,M selects tracks; --audio-codec libopus encodes them.
     copy_list = ",".join(str(n) for n in audio_tracks)
     cmd += ["--audio-copy", copy_list]
     for s, track_n in zip(kept_audio, audio_tracks, strict=True):
-        br = presets.opus_bitrate_kbps(s["channels"])
-        cmd += ["--audio-codec", f"{track_n}?libopus"]
-        cmd += ["--audio-bitrate", f"{track_n}?{br}"]
+        if audio_copy:
+            cmd += ["--audio-codec", f"{track_n}?copy"]
+        else:
+            br = presets.opus_bitrate_kbps(s["channels"])
+            cmd += ["--audio-codec", f"{track_n}?libopus"]
+            cmd += ["--audio-bitrate", f"{track_n}?{br}"]
         for key in ("language", "title"):
             value = s.get(key)
             if value:

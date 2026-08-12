@@ -83,6 +83,7 @@ def cmd_probe(args):
     cfg = config.load_config(args.env_file)
     audio_lang = _resolve(args.audio_lang, cfg.audio_lang)
     subtitle_lang = _resolve(args.subtitle_lang, cfg.subtitle_lang)
+    audio_copy = _resolve(args.audio_copy, cfg.audio_copy)
     single_audio_track = not args.all_audio_tracks
     svt_implementation = detect_svt_implementation()
     candidates = list(
@@ -213,7 +214,7 @@ def cmd_probe(args):
         audio_desc = (
             ", ".join(
                 f"{a['codec_name']}/{a['channels']}ch/{a.get('language') or 'und'} -> "
-                f"opus@{presets.opus_bitrate_kbps(a['channels'])}k"
+                + ("copy" if audio_copy else f"opus@{presets.opus_bitrate_kbps(a['channels'])}k")
                 for a in kept_audio
             )
             or "(none)"
@@ -317,6 +318,7 @@ def cmd_run(args):
     else:
         max_bitrate_fraction = _resolve(args.max_bitrate_fraction, cfg.max_bitrate_fraction)
     single_audio_track = not args.all_audio_tracks
+    audio_copy = _resolve(args.audio_copy, cfg.audio_copy)
     cover_image_path = Path(args.cover_image) if args.cover_image else None
     auto_cover_art = not args.no_cover_art
 
@@ -480,6 +482,7 @@ def cmd_run(args):
                 audio_lang=audio_lang,
                 subtitle_lang=subtitle_lang,
                 single_audio_track=single_audio_track,
+                audio_copy=audio_copy,
                 max_bitrate_fraction=max_bitrate_fraction,
                 output_dir=output_dir,
                 cover_image_path=cover_image_path,
@@ -641,6 +644,13 @@ def _add_language_args(sp: argparse.ArgumentParser) -> None:
         default=None,
         help="Keep only subtitle tracks matching this language (or 'all' for every "
         "track). Default: 'eng', or TRANSCODE_SUBTITLE_LANG from .env.",
+    )
+    sp.add_argument(
+        "--audio-copy",
+        default=None,
+        action="store_true",
+        help="Stream-copy kept audio tracks bit-exactly instead of re-encoding them "
+        "to Opus. Default: TRANSCODE_AUDIO_COPY from .env.",
     )
 
 

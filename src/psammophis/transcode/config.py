@@ -40,6 +40,7 @@ class Config:
     audio_lang: str
     subtitle_lang: str
     max_bitrate_fraction: float
+    audio_copy: bool = False
 
 
 def load_config(env_path: str | Path = ".env") -> Config:
@@ -48,6 +49,16 @@ def load_config(env_path: str | Path = ".env") -> Config:
     output_dir_raw = _get(env, "OUTPUT_DIR")
     audio_lang = _get(env, "AUDIO_LANG", "eng") or "eng"
     subtitle_lang = _get(env, "SUBTITLE_LANG", "eng") or "eng"
+    audio_copy_raw = _get(env, "AUDIO_COPY")
+    audio_copy = False
+    if audio_copy_raw is not None:
+        normalized = audio_copy_raw.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):
+            audio_copy = True
+        elif normalized not in ("0", "false", "no", "off", ""):
+            raise ConfigError(
+                "TRANSCODE_AUDIO_COPY must be a boolean (1/0, true/false, yes/no, on/off)"
+            )
 
     max_bitrate_fraction_raw = _get(env, "MAX_BITRATE_FRACTION")
     try:
@@ -66,4 +77,5 @@ def load_config(env_path: str | Path = ".env") -> Config:
         audio_lang=audio_lang,
         subtitle_lang=subtitle_lang,
         max_bitrate_fraction=max_bitrate_fraction,
+        audio_copy=audio_copy,
     )

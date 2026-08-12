@@ -44,3 +44,12 @@ def test_bitrate_cap_flags_are_mutually_exclusive(tmp_path):
                 "--no-bitrate-cap",
             ]
         )
+
+
+def test_audio_copy_flag_accepted_on_run_and_probe(tmp_path):
+    parser = build_parser(str(tmp_path))
+    run_args = parser.parse_args(["run", "--audio-copy"])
+    assert run_args.audio_copy is True
+    probe_args = parser.parse_args(["probe", "--audio-copy"])
+    assert probe_args.audio_copy is True
+    assert parser.parse_args(["run"]).audio_copy is None

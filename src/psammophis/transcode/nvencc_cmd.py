@@ -43,6 +43,34 @@ def map_nvenc_preset(nvenc_preset: str) -> str:
     return _NVENC_PRESET_TO_NVENCC.get(nvenc_preset, "quality")
 
 
+def nvencc_quality_args(preset: presets.Preset) -> list[str]:
+    """Map the ffmpeg av1_nvenc quality extras onto NVEncC flags.
+
+    The DV/HDR10+ path used to pass only ``--qvbr`` / ``-u quality``. That
+    dropped lookahead, uhq, B-ref mode, and AQ -- the Violet Evergarden
+    remux encode logged ``Lookahead off / AQ off / Tuning hq`` and then
+    failed the transparency bar at CQ 24. Keep this list in lockstep with
+    ``command.nvenc_video_args``.
+    """
+    args = [
+        "--tune",
+        preset.nvenc_tune,
+        "--lookahead",
+        "32",
+        "--bref-mode",
+        "middle",
+    ]
+    extra = preset.nvenc_extra
+    if extra.get("spatial-aq") == "1":
+        args.append("--aq")
+    if extra.get("temporal-aq") == "1":
+        args.append("--aq-temporal")
+    strength = extra.get("aq-strength")
+    if strength:
+        args += ["--aq-strength", strength]
+    return args
+
+
 def build_nvencc_command(
     input_path: str | Path,
     output_path: str | Path,
@@ -106,6 +134,7 @@ def build_nvencc_command(
         "2pass-full",
         "--avsw",  # software decode of source (DV RPU readable; no CUDA decode quirks)
     ]
+    cmd += nvencc_quality_args(preset)
 
     if cap_bps:
         # NVEncC wants kbps.

@@ -35,6 +35,7 @@ installs `ruff`, `basedpyright`, and `pytest`.
 | Command or feature | Required software | Optional software / capability |
 | --- | --- | --- |
 | `analyze`, `transcode probe` | `ffprobe`; `ffmpeg` for grain sampling and backend capability checks | NVIDIA support described below |
+| `abtest` | `ffprobe`; `ffmpeg` with `libsvtav1` and the `libvmaf` filter | Official libjxl `ssimulacra2` binary |
 | `track-strip` | `ffprobe`, `ffmpeg`, and MKVToolNix (`mkvmerge`) | None |
 | `mkvedit` | MKVToolNix (`mkvmerge` and `mkvpropedit`) | None |
 | `transcode run` | `ffprobe`; `ffmpeg` built with the `libsvtav1` and `libopus` encoders; `mkvpropedit`; an identifiable SVT-AV1 implementation (upstream or community `svt-av1-hdr`) | `av1_nvenc`, NVEncC, `dovi_tool`, and `hdr10plus_tool` as described below |
@@ -118,6 +119,7 @@ From the repository checkout:
 uv sync --group dev
 ./run.sh --help
 ./run.sh transcode --help
+./run.sh abtest --help
 ./run.sh compare --help
 uv run pytest
 ```
@@ -143,6 +145,7 @@ underlying CLI subcommands (`psammophis analyze`, `psammophis transcode`,
 
 | Skill | Purpose |
 | --- | --- |
+| [`psm-abtest`](skills/psm-abtest) | Clip-aligned encoder A/B: lossless refs, multiple libsvtav1 recipes, scored with `compare`. |
 | [`psm-analyze`](skills/psm-analyze) | Read-only explanation of the AV1 preset, detected HDR/grain characteristics, backend, and active encoder implementation. |
 | [`psm-artwork`](skills/psm-artwork) | Fetch posters, fanart, episode stills, and NFO sidecars for organized media. |
 | [`psm-compare`](skills/psm-compare) | Full-reference video comparison (VMAF/PSNR/SSIM/MS-SSIM) and color-managed still-image comparison, with stratified or full sampling. |
@@ -154,9 +157,9 @@ underlying CLI subcommands (`psammophis analyze`, `psammophis transcode`,
 | [`psm-track-strip`](skills/psm-track-strip) | Scan and remux media to keep the intended language/audio/subtitle tracks and drop redundant codecs. |
 | [`psm-transcode`](skills/psm-transcode) | Re-encode video to AV1 and selected audio to Opus with CPU/GPU, HDR/Dolby-Vision, grain-aware, and bitrate-capped paths. |
 
-Public CLI command names (distinct from the skill names above) are `analyze`,
-`artwork`, `compare`, `env-check`, `mkvedit`, `organize`, `runs`, `subtitle`,
-`track-strip`, and `transcode`.
+Public CLI command names (distinct from the skill names above) are `abtest`,
+`analyze`, `artwork`, `compare`, `env-check`, `mkvedit`, `organize`, `runs`,
+`subtitle`, `track-strip`, and `transcode`.
 
 ## Choosing the right operation
 
@@ -169,7 +172,8 @@ Public CLI command names (distinct from the skill names above) are `analyze`,
 
 The skill definitions stay short and operational. Detailed, reusable explanations live in [`notes/`](notes/):
 
-- [`av1-encoding.md`](notes/av1-encoding.md) — current CPU/GPU presets, mainline versus `svt-av1-hdr`, bitrate caps, expected savings, AV1/Opus tradeoffs, the preset-speed investigation behind `film`/`film-fast` and `anime`/`anime-fast`, and the `nvenc-degrain` backend (denoise + nvenc + `grav1synth` grain reinjection).
+- [`av1-encoding.md`](notes/av1-encoding.md) — current CPU/GPU presets, mainline versus `svt-av1-hdr`, bitrate caps, expected savings, AV1/Opus tradeoffs, the preset-speed investigation behind `film`/`film-fast` and `anime`/`anime-fast`, the `nvenc-degrain` backend (denoise + nvenc + `grav1synth` grain reinjection), and the VDH lowest-class webcam check.
+- [`source-class-audit.md`](notes/source-class-audit.md) — measured evidence for the master / webrip / stream / lowest axis: Violet Evergarden remux vs NVENC, WowGirls / MetArtX film ladders, and the 75-file VDH webcam probe plus 15-window CQ/CRF A/B.
 - [`track-filtering.md`](notes/track-filtering.md) — language, anime, commentary, and SDH detection, safety gates, stripping mechanics, `--keep-all-subs`, and space-saving estimates.
 - [`quality-comparison.md`](notes/quality-comparison.md) — comparison pipeline, sampling, metrics, and how to interpret values.
 - [`library-naming.md`](notes/library-naming.md) — Plex/Jellyfin folder, filename, artwork, and NFO conventions.

@@ -63,6 +63,23 @@ def test_build_analysis_picks_tier_and_preset_from_height_and_profile():
     a = _build_analysis("Movie.mkv", probed, "film", gpu_index=0, nvencc_ok=False, grain=None)
     assert a.tier == "2160p"
     assert a.preset.name == "2160p-film"
+    assert a.source_class.name == "master"
+
+
+def test_build_analysis_webrip_source_raises_cq():
+    probed = _probed(
+        _video(
+            codec_name="h264",
+            profile="High",
+            pix_fmt="yuv420p",
+            bit_rate=21_000_000,
+            color_transfer="bt709",
+        )
+    )
+    a = _build_analysis("wow.mp4", probed, "film", gpu_index=None, nvencc_ok=False, grain=None)
+    assert a.source_class.name == "webrip"
+    assert a.preset.name == "2160p-film+webrip"
+    assert a.preset.nvenc_cq == 26
 
 
 def test_build_analysis_no_gpu_forces_cpu():
@@ -118,6 +135,7 @@ def test_format_analysis_includes_key_facts():
     text = format_analysis(a)
     assert "Some Movie.mkv" in text
     assert "2160p-film" in text
+    assert "source-class: master" in text
     assert "backend: cpu via" in text
     assert "gpu_index=0" in text
     assert "grain: 0.0150" in text

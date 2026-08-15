@@ -48,9 +48,10 @@ Sample text output for one file:
 ```
 Some Movie (2001)/Some Movie (2001).mkv
     1920x1080 (1080p) hevc Main 10 HDR10  size=38.2 GiB
+    source-class: master (32.0 Mb/s; hevc 32.0 Mb/s 1080p meets the master floor (12 Mb/s), 10-bit)
     preset: 1080p-film -- 1080p live-action Blu-ray remux -- the common case
-    cpu:   preset=4 crf=22 tune=0 film-grain=10 extra={'enable-variance-boost': '1'}
-    nvenc: preset=p7 tune=uhq cq=24 extra={'spatial-aq': '1', 'temporal-aq': '1', 'aq-strength': '10'}
+    cpu:   preset=4 crf=24 tune=0 film-grain=0 extra={'enable-variance-boost': '1'}
+    nvenc: preset=p7 tune=uhq cq=22 extra={'spatial-aq': '1', 'temporal-aq': '1', 'aq-strength': '10'}
     backend: cpu via ffmpeg  (gpu_index=0, nvencc=no)
     grain: 0.0143 (cpu preferred, threshold=0.0120, samples=[0.0131, 0.0149, 0.0148])
 ```

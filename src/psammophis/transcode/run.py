@@ -16,6 +16,7 @@ from pathlib import Path
 from psammophis.medialib import av1_backend, colorinfo
 from psammophis.medialib import av1_presets as presets
 from psammophis.medialib.grain import GrainMeasurement, measure_grain
+from psammophis.medialib.sourceclass import apply_source_class, classify_source
 from psammophis.medialib.svt import SvtImplementation, detect_svt_implementation
 from psammophis.medialib.videoprobe import probe_file
 from psammophis.runtime.filesystem import (
@@ -459,6 +460,8 @@ def transcode_one(
     on_heartbeat: HeartbeatCallback | None = None,
     grain_routing: bool = True,
     grain_threshold: float = av1_backend.GRAIN_CPU_THRESHOLD,
+    source_class: str = "auto",
+    bitrate_cap_from_class: bool = False,
 ) -> tuple[TranscodeResult, dict | None]:
     """When `output_dir` is set, the converted file is written directly into
     that directory under its own filename (flat -- not mirroring `abs_path`'s
@@ -595,7 +598,12 @@ def transcode_one(
         _emit_phase(on_phase, "select-backend", "succeeded")
 
     hdr = colorinfo.is_hdr(video)
-    preset = presets.select_preset(video["height"], profile, hdr)
+    classified = classify_source(probed, override=source_class)
+    preset = apply_source_class(
+        presets.select_preset(video["height"], profile, hdr), classified.name
+    )
+    if bitrate_cap_from_class:
+        max_bitrate_fraction = classified.recommended_cap_fraction
     svt_implementation = detect_svt_implementation() if backend == "cpu" else None
     if not execute:
         if is_degrain:

@@ -13,6 +13,7 @@ from psammophis.medialib import av1_backend
 from psammophis.medialib import av1_presets as presets
 from psammophis.medialib.gpu import detect_av1_nvenc_gpu
 from psammophis.medialib.grain import GRAIN_CPU_THRESHOLD, measure_grain
+from psammophis.medialib.sourceclass import SOURCE_CLASSES
 from psammophis.medialib.svt import detect_svt_implementation
 from psammophis.medialib.videoprobe import probe_file
 from psammophis.medialib.walk import walk_media_files
@@ -59,6 +60,13 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         default=presets.DEFAULT_PROFILE,
         help="Content profile for preset selection (default: film) -- see transcode's "
         "SKILL.md for why this is never auto-detected",
+    )
+    p.add_argument(
+        "--source-class",
+        choices=("auto", *SOURCE_CLASSES),
+        default="auto",
+        help="Source delivery class (master/webrip/stream/lowest). auto detects "
+        "from codec, profile, and bitrate. See transcode --source-class.",
     )
     p.add_argument(
         "--grain-threshold",
@@ -191,6 +199,7 @@ def main(argv: list[str] | None = None, context: AppContext | None = None) -> in
             grain,
             svt_implementation,
             grain_threshold=args.grain_threshold,
+            source_class=args.source_class,
         )
         results.append(analysis)
         if not args.json:

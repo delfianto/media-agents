@@ -1,6 +1,5 @@
 import argparse
 import json
-import math
 import os
 import sys
 import tempfile
@@ -20,17 +19,9 @@ from psammophis.runtime.filesystem import atomic_write_text
 from psammophis.runtime.signals import CancellationRequested
 
 from .image import IMAGE_EXTENSIONS, compare_images, format_image_report
-from .metrics import (
-    check_libvmaf,
-    extract_frame,
-    find_ssimulacra2,
-    find_vmaf_model,
-    run_ssimulacra2,
-    run_vmaf_clip,
-)
-from .probe import probe_video, validate_alignment
-from .report import build_result, format_report
-from .sampling import WORKLOADS, clip_ranges, stratified_timestamps
+from .report import format_report
+from .sampling import WORKLOADS
+from .video import compare_video_files, require_positive, select_ssimulacra2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,10 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _positive(name: str, value: int | float) -> None:
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError(f"{name} must be finite")
-    if value <= 0:
-        raise ValueError(f"{name} must be positive")
+    require_positive(name, value)
 
 
 def _media_type(args: argparse.Namespace, reference: Path, distorted: Path) -> str:
@@ -101,16 +89,7 @@ def _media_type(args: argparse.Namespace, reference: Path, distorted: Path) -> s
 
 
 def _ssimulacra_selection(args: argparse.Namespace) -> tuple[str | None, str]:
-    binary = None if args.skip_ssimulacra2 else find_ssimulacra2()
-    if args.require_ssimulacra2 and binary is None:
-        raise RuntimeError(
-            "the official ssimulacra2 executable is unavailable; install libjxl dev tools"
-        )
-    if args.skip_ssimulacra2:
-        return None, "skipped by request"
-    if binary is None:
-        return None, "official ssimulacra2 executable not found"
-    return binary, "available"
+    return select_ssimulacra2(skip=args.skip_ssimulacra2, require=args.require_ssimulacra2)
 
 
 def _validate_json_destination(
@@ -216,166 +195,42 @@ def main(argv: list[str] | None = None, context: AppContext | None = None) -> in
             return 0
 
         if emitter is not None:
-            emitter.emit(PhaseStarted, phase="probe", item=item_name)
-        active_phase = "probe"
+            emitter.emit(PhaseStarted, phase="compare-video", item=item_name)
+        active_phase = "compare-video"
         active_phase_started = time.monotonic()
-        check_libvmaf()
-        reference = probe_video(reference_path)
-        distorted = probe_video(distorted_path)
-        alignment_errors = validate_alignment(reference, distorted)
-        if alignment_errors:
-            raise ValueError("alignment preflight failed:\n  - " + "\n  - ".join(alignment_errors))
+        with tempfile.TemporaryDirectory(prefix="compare-") as temp_name:
+
+            def on_step(text: str) -> None:
+                if context is None:
+                    print(f"[{text}]", file=sys.stderr, flush=True)
+                if emitter is not None:
+                    emitter.emit(ItemProgress, item=item_name, phase="compare-video")
+
+            result = compare_video_files(
+                reference_path,
+                distorted_path,
+                Path(temp_name),
+                mode=args.mode,
+                clips=args.clips,
+                clip_duration=args.clip_duration,
+                ssimulacra_frames=args.ssimulacra_frames,
+                threads=args.threads,
+                skip_ssimulacra2=args.skip_ssimulacra2,
+                require_ssimulacra2=args.require_ssimulacra2,
+                on_step=on_step,
+                on_heartbeat=(lambda: emit_heartbeat("compare-video"))
+                if emitter is not None
+                else None,
+            )
         if emitter is not None:
             emitter.emit(
                 PhaseCompleted,
-                phase="probe",
+                phase="compare-video",
                 item=item_name,
                 status="succeeded",
                 elapsed_seconds=time.monotonic() - active_phase_started,
             )
         active_phase = None
-
-        workload = WORKLOADS[args.mode]
-        clips = args.clips if args.clips is not None else workload.clips
-        clip_duration = (
-            args.clip_duration if args.clip_duration is not None else workload.clip_duration
-        )
-        ssim_count = (
-            args.ssimulacra_frames
-            if args.ssimulacra_frames is not None
-            else workload.ssimulacra_frames
-        )
-        _positive("clips", clips)
-        _positive("threads", args.threads)
-        if not workload.full or args.clip_duration is not None:
-            _positive("clip duration", clip_duration)
-        if ssim_count < 0:
-            raise ValueError("SSIMULACRA2 frame count cannot be negative")
-        common_duration = min(reference.duration, distorted.duration)
-        ranges = clip_ranges(common_duration, clips, clip_duration)
-        model, model_name = find_vmaf_model(reference.height)
-        vmaf_frames: list[dict[str, float]] = []
-        ssimulacra_frames: list[dict[str, float]] = []
-        with tempfile.TemporaryDirectory(prefix="compare-") as temp_name:
-            temp = Path(temp_name)
-            total_steps = len(ranges) + (ssim_count if binary else 0)
-            completed_steps = 0
-            if emitter is not None:
-                emitter.emit(PhaseStarted, phase="vmaf", item=item_name)
-            vmaf_started = time.monotonic()
-            active_phase = "vmaf"
-            active_phase_started = vmaf_started
-            for index, (start, duration) in enumerate(ranges, start=1):
-                progress_text = f"VMAF {index}/{len(ranges)} at {start:.2f}s"
-                if context is None:
-                    print(f"[{progress_text}]", file=sys.stderr, flush=True)
-                frames = run_vmaf_clip(
-                    reference_path,
-                    distorted_path,
-                    start,
-                    duration,
-                    model,
-                    args.threads,
-                    temp / f"vmaf-{index:03d}.json",
-                    reference.frame_rate,
-                    reference.width,
-                    reference.height,
-                    on_heartbeat=(lambda: emit_heartbeat("vmaf")) if emitter is not None else None,
-                )
-                vmaf_frames.extend(frames)
-                completed_steps += 1
-                if emitter is not None:
-                    emitter.emit(
-                        ItemProgress,
-                        item=item_name,
-                        phase="vmaf",
-                        percent=(completed_steps / total_steps * 100.0) if total_steps else 100.0,
-                    )
-            if emitter is not None:
-                emitter.emit(
-                    PhaseCompleted,
-                    phase="vmaf",
-                    item=item_name,
-                    status="succeeded",
-                    elapsed_seconds=time.monotonic() - vmaf_started,
-                )
-            active_phase = None
-            if binary and ssim_count:
-                if emitter is not None:
-                    emitter.emit(PhaseStarted, phase="ssimulacra2", item=item_name)
-                ssim_started = time.monotonic()
-                active_phase = "ssimulacra2"
-                active_phase_started = ssim_started
-                timestamps = stratified_timestamps(common_duration, ssim_count, margin=0.5)
-                for index, timestamp in enumerate(timestamps, start=1):
-                    progress_text = f"SSIMULACRA2 {index}/{len(timestamps)} at {timestamp:.2f}s"
-                    if context is None:
-                        print(f"[{progress_text}]", file=sys.stderr, flush=True)
-                    reference_png = temp / f"reference-{index:03d}.png"
-                    distorted_png = temp / f"distorted-{index:03d}.png"
-
-                    def heartbeat() -> None:
-                        emit_heartbeat("ssimulacra2")
-
-                    extract_frame(
-                        reference_path,
-                        timestamp,
-                        reference_png,
-                        reference,
-                        on_heartbeat=heartbeat,
-                    )
-                    extract_frame(
-                        distorted_path,
-                        timestamp,
-                        distorted_png,
-                        distorted,
-                        on_heartbeat=heartbeat,
-                    )
-                    ssimulacra_frames.append(
-                        {
-                            "timestamp": timestamp,
-                            "ssimulacra2": run_ssimulacra2(
-                                binary,
-                                reference_png,
-                                distorted_png,
-                                on_heartbeat=heartbeat,
-                            ),
-                        }
-                    )
-                    completed_steps += 1
-                    if emitter is not None:
-                        emitter.emit(
-                            ItemProgress,
-                            item=item_name,
-                            phase="ssimulacra2",
-                            percent=(completed_steps / total_steps * 100.0),
-                        )
-                if emitter is not None:
-                    emitter.emit(
-                        PhaseCompleted,
-                        phase="ssimulacra2",
-                        item=item_name,
-                        status="succeeded",
-                        elapsed_seconds=time.monotonic() - ssim_started,
-                    )
-                active_phase = None
-
-        if ssim_count == 0 and binary:
-            ssim_status = "zero samples requested"
-        elif binary is None:
-            ssim_status = initial_ssim_status
-        else:
-            ssim_status = "measured"
-        result = build_result(
-            reference,
-            distorted,
-            args.mode,
-            model_name,
-            ranges,
-            vmaf_frames,
-            ssimulacra_frames,
-            ssim_status,
-        )
         encoded = json.dumps(result, indent=2)
         if json_out:
             json_out.parent.mkdir(parents=True, exist_ok=True)

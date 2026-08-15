@@ -17,7 +17,7 @@ src/psammophis/        application package
   cli.py               top-level dispatcher + global options
   runtime/             events, journal, reporters, process/filesystem safety, roots
   medialib/            shared media helpers (walk, dotenv, presets, …)
-  analyze/ artwork/ transcode/ envcheck/ mkvedit/
+  analyze/ abtest/ artwork/ transcode/ envcheck/ mkvedit/
   organize/ compare/ subtitle/ trackstrip/
 tests/                 pytest suite mirroring package layout
 skills/<name>/SKILL.md skill definition (frontmatter + workflow instructions)
@@ -52,8 +52,8 @@ uv run psammophis <command> ...
 python -m psammophis <command> ...
 ```
 
-Public commands: `analyze`, `artwork`, `compare`, `env-check`, `mkvedit`,
-`organize`, `runs`, `subtitle`, `track-strip`, `transcode`.
+Public commands: `abtest`, `analyze`, `artwork`, `compare`, `env-check`,
+`mkvedit`, `organize`, `runs`, `subtitle`, `track-strip`, `transcode`.
 
 `run.sh` sources `.envrc` (if present), sets `MEDIALIB_ROOT` when appropriate,
 and `exec`s `uv run --project <repo> psammophis "$@"`. It does not construct

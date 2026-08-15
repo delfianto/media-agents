@@ -35,22 +35,24 @@ def test_select_preset_hdr_uses_same_quality_target_as_sdr():
     base = presets.PRESETS[("2160p", "film")]
     hdr_preset = presets.select_preset(2160, "film", hdr=True)
     assert hdr_preset is base
-    assert hdr_preset.crf == 20
+    assert hdr_preset.crf == 19
     assert hdr_preset.nvenc_cq == 22
 
 
-def test_every_film_grain_preset_enables_source_denoising():
+def test_default_presets_do_not_enable_film_grain_synthesis():
+    # FGS+denoise smeared digital-4K texture in the Lab Mutation A/B; the
+    # HDR fork also defaults denoise off. Keep the table grain-free.
     for preset in presets.PRESETS.values():
-        if preset.film_grain:
-            assert preset.film_grain_denoise
+        assert preset.film_grain == 0
+        assert preset.film_grain_denoise is False
 
 
 def test_svt_hdr_uses_its_own_crf_scale():
     preset = presets.PRESETS[("2160p", "film")]
     mainline = SvtImplementation("mainline", "v4.1.0", "test")
     fork = SvtImplementation("svt-av1-hdr", "v4.1.0", "test")
-    assert presets.svt_crf(preset, mainline) == 20
-    assert presets.svt_crf(preset, fork) == 27
+    assert presets.svt_crf(preset, mainline) == 19
+    assert presets.svt_crf(preset, fork) == 26
     assert presets.svt_crf(preset, SvtImplementation("unknown", None, None)) is None
 
 
@@ -99,6 +101,37 @@ def test_2160p_anime_uses_preset_5_after_the_speed_sweep():
     # "Preset-speed investigation" for the Ghost in the Shell / Violet
     # Evergarden sweep that found 5 the best bits-per-quality of 5/6/7.
     assert presets.PRESETS[("2160p", "anime")].svt_preset == 5
+
+
+def test_film_cpu_crf_after_wowgirls_metartx_audit():
+    # 2160p CRF 26 stays (Lab Mutation remux + VMAF p5 96+ on WowGirls).
+    # 1080p/720p/sd hdr CRFs 31/33/35 failed p5 ~91-93 on clean downscales.
+    assert presets.PRESETS[("2160p", "film")].svt_hdr_crf == 26
+    assert presets.PRESETS[("1080p", "film")].svt_hdr_crf == 20
+    assert presets.PRESETS[("720p", "film")].svt_hdr_crf == 22
+    assert presets.PRESETS[("sd", "film")].svt_hdr_crf == 24
+    assert presets.PRESETS[("1080p", "film")].crf == 13
+    assert presets.PRESETS[("720p", "film")].crf == 15
+    assert presets.PRESETS[("sd", "film")].crf == 17
+
+
+def test_film_nvenc_cq_after_wowgirls_metartx_audit():
+    # Clean digital 4K (WowGirls / MetArtX) held remux-bar at CQ 22.
+    # 1080p/720p/sd judged on lanczos downscales of the same MetArtX 4K
+    # windows: current 26/28/30 left p5 in the mid-94s, CQ 22/24/24
+    # recovered p5 ~96 and S2 ~83-85. See notes/av1-encoding.md.
+    assert presets.PRESETS[("2160p", "film")].nvenc_cq == 22
+    assert presets.PRESETS[("1080p", "film")].nvenc_cq == 22
+    assert presets.PRESETS[("720p", "film")].nvenc_cq == 24
+    assert presets.PRESETS[("sd", "film")].nvenc_cq == 24
+
+
+def test_2160p_anime_nvenc_cq_is_remux_transparent():
+    # CQ 24 on the Violet Evergarden UHD remux produced 1.46 Mb/s and failed
+    # the transparency bar on painted backgrounds. CQ 16 is the lowest value
+    # that held remux-bar VMAF / near-bar SSIMULACRA2 on those same windows.
+    assert presets.PRESETS[("2160p", "anime")].nvenc_cq == 16
+    assert presets.PRESETS[("2160p", "anime-fast")].nvenc_cq == 16
 
 
 def test_select_preset_film_fast_matches_2160p_film_quality_target():

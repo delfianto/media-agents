@@ -26,6 +26,7 @@ from psammophis.runtime.signals import CancellationRequested
 # Public command name -> (module path, callable name).
 _COMMANDS: dict[str, tuple[str, str]] = {
     "analyze": ("psammophis.analyze.cli", "main"),
+    "abtest": ("psammophis.abtest.cli", "main"),
     "artwork": ("psammophis.artwork.cli", "main"),
     "transcode": ("psammophis.transcode.cli", "main"),
     "env-check": ("psammophis.envcheck.cli", "main"),

@@ -4,7 +4,7 @@ settings for both the CPU (libsvtav1) and GPU (av1_nvenc) backends.
 Numbers and their sourcing are written up in the repository's
 notes/av1-encoding.md --
 this module only holds the resulting table plus the pure lookup/adjustment
-functions. Two axes decide a preset:
+functions. Three axes decide what actually runs:
 
   - resolution tier: derived from the source's own pixel dimensions (an
     objective fact ffprobe reports) via resolution_tier() below.
@@ -13,6 +13,10 @@ functions. Two axes decide a preset:
     or flat-shaded video (a live-action Japanese film would be misclassified
     by that signal), so unlike track-strip's anime-audio-policy heuristic,
     profile here is always an explicit choice by whoever invokes `run`.
+  - source class: master / webrip / stream / lowest -- *is* auto-detected
+    from codec, profile, and bitrate (see ``sourceclass.classify_source``).
+    The table below is the master (Blu-ray remux/raw) calibration. webrip,
+    stream, and lowest raise CRF/CQ so those files are not treated as remuxes.
 
 HDR is an objective per-file fact used for color and dynamic-metadata
 preservation, but it does not alter the quality target. CRF/CQ already targets
@@ -97,17 +101,17 @@ PRESETS: dict[tuple[str, str], Preset] = {
         name="2160p-film",
         description=(
             "4K live-action Blu-ray/UHD remux -- svt_preset=5 (raised from the "
-            "historical 4). The preset-speed sweep found 4 vs 5 statistically "
-            "indistinguishable in VMAF/SSIMULACRA2 across a clean, moderate-grain, "
-            "and heavy-grain clip, with 5 running 7-12% faster -- effectively free "
-            "efficiency. See notes/av1-encoding.md's 'Preset-speed investigation'."
+            "historical 4). svt-av1-hdr CRF 26, no film-grain synthesis: Lab "
+            "Mutation clip A/B found grain-10+denoise smeared skin texture while "
+            "fair VMAF was already 95+; CRF 26 / grain 0 held the remux bar with "
+            "more residual detail. See notes/av1-encoding.md."
         ),
         svt_preset=5,
-        crf=20,
-        svt_hdr_crf=27,
+        crf=19,
+        svt_hdr_crf=26,
         svt_tune=0,
-        film_grain=10,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra=_VARIANCE_BOOST,
         nvenc_preset="p7",
         nvenc_tune="uhq",
@@ -128,11 +132,11 @@ PRESETS: dict[tuple[str, str], Preset] = {
             "2160p-film since nvenc has no comparable preset-speed tradeoff to make."
         ),
         svt_preset=6,
-        crf=20,
-        svt_hdr_crf=27,
+        crf=19,
+        svt_hdr_crf=26,
         svt_tune=0,
-        film_grain=10,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra=_VARIANCE_BOOST,
         nvenc_preset="p7",
         nvenc_tune="uhq",
@@ -146,19 +150,20 @@ PRESETS: dict[tuple[str, str], Preset] = {
             "historical 4). Reused film's own preset-speed sweep methodology "
             "(fixed crf=29, varied svt_preset 5/6/7) against Ghost in the Shell "
             "and Violet Evergarden: 5 gave the best bits-per-quality of the "
-            "three on every clip. See notes/av1-encoding.md's 'Preset-speed "
-            "investigation'."
+            "three on every clip. GPU CQ 16 (was 24): CQ 24 on the Violet "
+            "Evergarden remux was 1.46 Mb/s and failed the remux-transparency "
+            "bar on painted backgrounds. See notes/av1-encoding.md."
         ),
         svt_preset=5,
         crf=22,
         svt_hdr_crf=29,
         svt_tune=1,
-        film_grain=4,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra=_ANIME_EXTRA,
         nvenc_preset="p7",
         nvenc_tune="uhq",
-        nvenc_cq=24,
+        nvenc_cq=16,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "8"},
     ),
     ("2160p", "anime-fast"): Preset(
@@ -179,27 +184,30 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=22,
         svt_hdr_crf=29,
         svt_tune=1,
-        film_grain=4,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra=_ANIME_EXTRA,
         nvenc_preset="p7",
         nvenc_tune="uhq",
-        nvenc_cq=24,
+        nvenc_cq=16,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "8"},
     ),
     ("1080p", "film"): Preset(
         name="1080p-film",
-        description="1080p live-action Blu-ray remux -- the common case",
+        description=(
+            "1080p live-action Blu-ray remux -- the common case. svt-av1-hdr "
+            "CRF 20 (was 31): MetArtX 4K downscale A/B, CRF 31 p5 ~93 / S2 ~75."
+        ),
         svt_preset=4,
-        crf=24,
-        svt_hdr_crf=31,
+        crf=13,
+        svt_hdr_crf=20,
         svt_tune=0,
-        film_grain=10,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra=_VARIANCE_BOOST,
         nvenc_preset="p7",
         nvenc_tune="uhq",
-        nvenc_cq=26,
+        nvenc_cq=22,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1", "aq-strength": "10"},
     ),
     ("1080p", "anime"): Preset(
@@ -209,8 +217,8 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=25,
         svt_hdr_crf=32,
         svt_tune=1,
-        film_grain=4,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra={**_ANIME_EXTRA, "tf-strength": "1"},
         nvenc_preset="p7",
         nvenc_tune="uhq",
@@ -219,17 +227,20 @@ PRESETS: dict[tuple[str, str], Preset] = {
     ),
     ("720p", "film"): Preset(
         name="720p-film",
-        description="720p live-action source (older/catalog titles)",
+        description=(
+            "720p live-action source (older/catalog titles). svt-av1-hdr CRF 22 "
+            "(was 33): MetArtX downscale A/B, CRF 33 p5 ~92 / S2 ~75."
+        ),
         svt_preset=5,
-        crf=26,
-        svt_hdr_crf=33,
+        crf=15,
+        svt_hdr_crf=22,
         svt_tune=0,
-        film_grain=8,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra=_VARIANCE_BOOST,
         nvenc_preset="p7",
         nvenc_tune="hq",
-        nvenc_cq=28,
+        nvenc_cq=24,
         nvenc_extra={"spatial-aq": "1", "temporal-aq": "1"},
     ),
     ("720p", "anime"): Preset(
@@ -239,8 +250,8 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=27,
         svt_hdr_crf=34,
         svt_tune=1,
-        film_grain=4,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         svt_extra=_ANIME_EXTRA,
         nvenc_preset="p7",
         nvenc_tune="hq",
@@ -249,16 +260,19 @@ PRESETS: dict[tuple[str, str], Preset] = {
     ),
     ("sd", "film"): Preset(
         name="sd-film",
-        description="Sub-720p live-action source (DVD-era catalog titles)",
+        description=(
+            "Sub-720p live-action source (DVD-era catalog titles). svt-av1-hdr "
+            "CRF 24 (was 35): MetArtX 480p-downscale A/B, CRF 35 p5 ~91 / S2 ~74."
+        ),
         svt_preset=6,
-        crf=28,
-        svt_hdr_crf=35,
+        crf=17,
+        svt_hdr_crf=24,
         svt_tune=0,
-        film_grain=6,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         nvenc_preset="p7",
         nvenc_tune="hq",
-        nvenc_cq=30,
+        nvenc_cq=24,
         nvenc_extra={"spatial-aq": "1"},
     ),
     ("sd", "anime"): Preset(
@@ -268,8 +282,8 @@ PRESETS: dict[tuple[str, str], Preset] = {
         crf=28,
         svt_hdr_crf=35,
         svt_tune=1,
-        film_grain=4,
-        film_grain_denoise=True,
+        film_grain=0,
+        film_grain_denoise=False,
         nvenc_preset="p7",
         nvenc_tune="hq",
         nvenc_cq=31,

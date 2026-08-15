@@ -75,13 +75,38 @@ def test_transcoded_stream_metadata_is_cleared_then_identity_fields_restored():
     assert "title=Surround 7.1" in cmd
 
 
-def test_cpu_film_grain_explicitly_enables_denoising():
+def test_cpu_default_film_preset_omits_film_grain_params():
     probed = _probed(audio=[_audio(1, "eng")])
     cmd = command.build_command("in.mkv", "out.mkv", probed, _preset(), "cpu")
     params = cmd[cmd.index("-svtav1-params") + 1]
-    assert "film-grain=10" in params
+    tokens = dict(part.split("=", 1) for part in params.split(":") if "=" in part)
+    assert "film-grain" not in tokens
+    assert "film-grain-denoise" not in tokens
+    assert "scd" not in tokens
+
+
+def test_cpu_optional_film_grain_can_still_enable_denoising():
+    base = _preset()
+    grainy = presets.Preset(
+        name=base.name,
+        description=base.description,
+        svt_preset=base.svt_preset,
+        crf=base.crf,
+        svt_hdr_crf=base.svt_hdr_crf,
+        svt_tune=base.svt_tune,
+        film_grain=8,
+        film_grain_denoise=True,
+        svt_extra=base.svt_extra,
+        nvenc_preset=base.nvenc_preset,
+        nvenc_tune=base.nvenc_tune,
+        nvenc_cq=base.nvenc_cq,
+        nvenc_extra=base.nvenc_extra,
+    )
+    probed = _probed(audio=[_audio(1, "eng")])
+    cmd = command.build_command("in.mkv", "out.mkv", probed, grainy, "cpu")
+    params = cmd[cmd.index("-svtav1-params") + 1]
+    assert "film-grain=8" in params
     assert "film-grain-denoise=1" in params
-    assert "scd=" not in params
 
 
 def test_svt_hdr_fork_uses_separate_crf_and_pinned_pq_parameters():
@@ -96,7 +121,7 @@ def test_svt_hdr_fork_uses_separate_crf_and_pinned_pq_parameters():
         svt_implementation=_HDR_FORK,
     )
     params = cmd[cmd.index("-svtav1-params") + 1]
-    assert cmd[cmd.index("-crf") + 1] == "31"
+    assert cmd[cmd.index("-crf") + 1] == str(_preset().svt_hdr_crf)
     for expected in (
         "sharp-tx=1",
         "tf-strength=1",
@@ -122,7 +147,7 @@ def test_mainline_does_not_receive_fork_only_parameters():
         svt_implementation=_MAINLINE,
     )
     params = cmd[cmd.index("-svtav1-params") + 1]
-    assert cmd[cmd.index("-crf") + 1] == "24"
+    assert cmd[cmd.index("-crf") + 1] == str(_preset().crf)
     assert "adaptive-film-grain" not in params
 
 

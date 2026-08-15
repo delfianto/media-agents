@@ -2,25 +2,53 @@
 
 `transcode` is tuned for large Blu-ray/UHD remuxes, not already-efficient web encodes. The executable preset table is in `src/psammophis/medialib/av1_presets.py`; this note explains the policy and the tradeoffs behind it.
 
+## Success criterion
+
+The pass/fail bar is **transparent or near-transparent against the source you actually have**. For a UHD remux that means remux-transparent. For a 21 Mb/s 4K AVC web encode it means transparent *to that AVC* — you cannot reconstruct remux quality from a source that never had it, and the remux CRF/CQ table will overspend (WowGirls CQ 22 wanted 40–60 Mb/s from a 21 Mb/s file). For a Constrained Baseline stream it means "don't make the mush worse, and don't spend remux bits on it."
+
+Judge a candidate with `compare` / `abtest` on multiple windows: prefer VMAF **p5/min** and SSIMULACRA2, then inspect the worst stills at 1:1. Do not treat source bitrate as a quality target — a 60 Mb/s remux is "what the disc stored," not "what the picture needs." Do not treat a tiny CQ-driven bitrate as proof of efficiency if the stills lost texture.
+
+## Source class (master / webrip / stream / lowest)
+
+Resolution × film/anime is not enough. The third axis is **how the file was delivered**:
+
+| Class | What it is | Detection | Quality policy |
+| --- | --- | --- | --- |
+| `master` | Blu-ray remux or raw capture | 10-bit HEVC/AV1 (or very high-bitrate AVC) at or above the master floor (4K 35 Mb/s, 1080p 12, 720p 8, SD 4) | Calibrated table as written |
+| `webrip` | Decent commercial encode, already more compressed than a remux (WowGirls-style 4K AVC ~20 Mb/s) | Between stream ceiling and master floor | +3 CRF / +4 CQ vs master table |
+| `stream` | Heavily streaming-optimized | Constrained/Baseline profile, **or** bitrate at/below the stream ceiling (4K 8 Mb/s, 1080p 3.5, 720p 1.8, SD 1.2) but above lowest | +6 CRF / +8 CQ; cap defaults to 70% of source |
+| `lowest` | Recordings, vintage films with dubious compression, legacy codecs (MPEG-2, DivX/Xvid, WMV) | Legacy codec family, **or** bitrate at/below the lowest ceiling (4K 3 Mb/s, 1080p 1.5, 720p 0.8, SD 0.6) | +10 CRF / +12 CQ; cap defaults to 60% of source |
+
+`--source-class auto` (default) runs `sourceclass.classify_source`. Override when the heuristic is wrong. Content profile (film/anime) stays explicit.
+
+The non-master deltas are **starting points**, not a fourth full preset table. webrip +4 CQ is the WowGirls overspend measurement (uncapped CQ 22 wanted 40–60 Mb/s from a 21 Mb/s 4K AVC). stream +8 / lowest +12 were bounded against 75 Video DownloadHelper webcam captures (see "Lowest-class webcam (VDH)" below and `notes/source-class-audit.md`). Validate a new cell with `compare` before treating it as master-grade evidence. Probe/analyze print `source-class:` on every file so a mis-bucket is visible before `--yes`.
+
 ## Presets we use
 
 The quality target is selected by coded frame height and an explicit content profile (`film` or `anime`). HDR changes signaling and metadata preservation, not the quality target: reducing CRF just because a source is HDR wastes bits unless a comparison demonstrates a visible benefit.
 
 | Source | SVT preset | Mainline CRF | `svt-av1-hdr` CRF | SVT tune | Film grain | NVENC CQ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2160p film | 5 | 20 | 27 | 0 (VQ) | 10 | 22 |
-| 2160p film-fast | 6 | 20 | 27 | 0 (VQ) | 10 | 22 |
-| 2160p anime | 5 | 22 | 29 | 1 (PSNR) | 4 | 24 |
-| 2160p anime-fast | 6 | 22 | 29 | 1 (PSNR) | 4 | 24 |
-| 1080p film | 4 | 24 | 31 | 0 (VQ) | 10 | 26 |
-| 1080p anime | 4 | 25 | 32 | 1 (PSNR) | 4 | 27 |
-| 720p film | 5 | 26 | 33 | 0 (VQ) | 8 | 28 |
-| 720p anime | 5 | 27 | 34 | 1 (PSNR) | 4 | 29 |
-| SD film/anime | 6 | 28 | 35 | 0/1 | 6/4 | 30/31 |
+| 2160p film | 5 | 19 | 26 | 0 (VQ) | 0 | 22 |
+| 2160p film-fast | 6 | 19 | 26 | 0 (VQ) | 0 | 22 |
+| 2160p anime | 5 | 22 | 29 | 1 (PSNR) | 0 | 16 |
+| 2160p anime-fast | 6 | 22 | 29 | 1 (PSNR) | 0 | 16 |
+| 1080p film | 4 | 13 | 20 | 0 (VQ) | 0 | 22 |
+| 1080p anime | 4 | 25 | 32 | 1 (PSNR) | 0 | 27 |
+| 720p film | 5 | 15 | 22 | 0 (VQ) | 0 | 24 |
+| 720p anime | 5 | 27 | 34 | 1 (PSNR) | 0 | 29 |
+| SD film | 6 | 17 | 24 | 0 (VQ) | 0 | 24 |
+| SD anime | 6 | 28 | 35 | 1 (PSNR) | 0 | 31 |
 
-CPU uses SVT-AV1 preset 4 for archival work on tiers that haven't been re-validated (1080p/720p/sd): presets 0–3 cost a large amount of time for diminishing gains, while 5–6 are sensible for lower resolution material. 2160p film was raised to preset 5 (with a `film-fast` option at 6) and 2160p anime was raised to preset 5 (with an `anime-fast` option at 6) after the sweeps in "Preset-speed investigation" below. Film uses tune 0 (visual quality) and animation uses tune 1 because the psychovisual optimizer can ring on flat-colored anime edges. All presets enable variance boost. Film-grain presets explicitly set `film-grain-denoise=1`, so source noise is removed before encoding and a statistically similar grain signal is synthesized at playback instead of spending bits coding every noisy pixel.
+CPU uses SVT-AV1 preset 4 for archival work on tiers that haven't been re-validated (1080p/720p/sd): presets 0–3 cost a large amount of time for diminishing gains, while 5–6 are sensible for lower resolution material. 2160p film was raised to preset 5 (with a `film-fast` option at 6) and 2160p anime was raised to preset 5 (with an `anime-fast` option at 6) after the sweeps in "Preset-speed investigation" below. Film uses tune 0 (visual quality) and animation uses tune 1 because the psychovisual optimizer can ring on flat-colored anime edges. All presets enable variance boost.
 
-GPU uses `av1_nvenc` at preset p7 with quality-oriented tuning, multipass, spatial/temporal AQ, and `b_ref_mode=middle`. GPU is faster but generally less efficient per bit than SVT, so its CQ is lower (more generous) than the corresponding SVT target. Dolby Vision and HDR10+ use NVEncC when available so dynamic metadata can be copied; otherwise the decision falls back to CPU rather than silently losing it. GPU selection is capability-probed with a real small encode, not inferred from a GPU model-name table.
+Film-grain synthesis is **off** by default. The HDR fork itself disables source denoising because it "often harms visual fidelity," and a six-clip full-frame A/B on a digital 4K close-up (Lab Mutation) showed `film-grain=10` + `film-grain-denoise=1` was the smear: fair VMAF was already 95+ even on the old recipe, but SSIMULACRA2 and pores/specularity recovered once FGS was removed. CRF 26 (fork) / 19 (mainline) on 2160p film is one point more transparent than the previous 27/20 pair. Do not turn FGS back on as a size trick without a per-title grain check.
+
+Do not copy the May 2025 Doom9 "use tune 3" advice onto today's binary. In that first HDR-fork post, tune 3 **was** the film-grain retention tune (encode real grain: TF/CDEF/restoration off, high `ac-bias`). After MS_SSIM was added, that tune was renumbered to **tune 5**; tune 3 is now IQ / still-image / AVIF. Tune 5 is for grainy film you want to keep as pixels, at preset 2, not a general 4K default. Our clip A/B of tune 5 / CRF 30 / preset 2 was slower and larger with worse SSIMULACRA2 than tune 0 / CRF 26 / no FGS on digital 4K.
+
+GPU uses `av1_nvenc` at preset p7 with quality-oriented tuning, multipass, spatial/temporal AQ, and `b_ref_mode=middle`. GPU is faster but generally less efficient per bit than SVT, so its CQ is lower (more generous) than the corresponding SVT target. Dolby Vision and HDR10+ use NVEncC when available so dynamic metadata can be copied; otherwise the decision falls back to CPU rather than silently losing it. The NVEncC argv must carry the same tune / lookahead / AQ / B-ref extras as the ffmpeg path — omitting them is how the Violet Evergarden encode logged `Lookahead off / AQ off / Tuning hq`. GPU selection is capability-probed with a real small encode, not inferred from a GPU model-name table.
+
+AV1 NVENC CQ is a **0–63** quality stop (`--qvbr N` is `--vbr 0 --vbr-quality N`), not an x264 0–51 CRF. QVBR does not spend a fraction of the remux bitrate; it stops once it thinks it hit that score.
 
 Every encode also applies a default video bitrate ceiling of 85% of the source's measured video bitrate. CRF/CQ is a quality target, not a size limit; the cap protects against an already-compressed source becoming larger. For a 40–80+ Mb/s remux this cap normally never binds, so it does not reduce the usual quality target. Use `--no-bitrate-cap` only when deliberately accepting that risk.
 
@@ -28,7 +56,7 @@ Every encode also applies a default video bitrate ceiling of 85% of the source's
 
 Both libraries register the same FFmpeg encoder name, `libsvtav1`, but they do not use the same CRF scale. The HDR fork allocates substantially more bits at the mainline value. Psammophis detects the loader-resolved implementation via the fork-only `svt_hdr_get_version` symbol and selects separate CRF tables; unknown implementations are rejected rather than guessed.
 
-The practical calibration for 2160p film is mainline CRF 20 versus fork CRF 27. On the reference UHD sample that produced approximately 31.1 versus 31.3 Mb/s with near-identical full-reference scores (VMAF about 95.5/95.3, PSNR-Y about 44.7/44.5 dB, SSIM about 0.9989/0.9990). The seven-point offset for other tiers is a useful starting point, not a universal law: validate a new library build or tuning change with `compare` across several titles.
+The scale offset was first measured at mainline CRF 20 versus fork CRF 27 on a reference UHD sample (approximately 31.1 versus 31.3 Mb/s, VMAF about 95.5/95.3). 2160p film now uses 19 / 26 — same seven-point gap, one CRF step more transparent after the Lab Mutation A/B. The offset for other tiers is a starting point, not a universal law: validate a new library build or tuning change with `compare` across several titles.
 
 HDR10 signaling is passed explicitly (CICP, mastering display, and content light metadata). Dolby Vision RPU is retained on the CPU path; NVEncC is used for GPU dynamic-metadata paths. Check the output metadata, not only whether the file decodes.
 
@@ -113,6 +141,112 @@ film's 0) and content type differ enough between the two profiles that this
 is an assumption carried over, not independently re-proven; revisit if a
 future anime encode looks meaningfully different from what preset 4 would
 have produced.
+
+### 2160p anime NVENC remux audit (Violet Evergarden)
+
+The existing `anime/Violet Evergarden The Movie (2020).mkv` was NVEncC
+`--qvbr 24` against the 62.1 Mb/s HEVC remux. Video landed at **1.46 Mb/s**.
+Six random 20 s windows vs the remux (active 3840×1608, letterbox cropped):
+
+- CQ 24 (shipped): mean VMAF 95.66 / p5 94.88 / S2 79.80; worst window
+  (painted cliff) VMAF 95.03 / S2 75.36. 1:1 stills lost grass brushwork
+  and water sparkle. **Failed the transparency bar.**
+- Same cliff clip, CQ 20: VMAF 95.83 / S2 79.24 — still short.
+- Same cliff clip, CQ 16: VMAF 96.28 / p5 95.33 / S2 82.00. 1:1 grass and
+  cliff hold the remux paint. Matches the CPU anime remux-bar VMAF
+  (~96.25) and is within ~2 S2 of that CPU recipe (83.94).
+- CQ 16 + AQ/lookahead/uhq on all six windows: mean VMAF 96.66 / p5 95.97
+  / S2 84.52. Isolated S2 mins of 17–34 are still-seek cut mismatches
+  (VMAF at those timestamps stays mid-95s), same artifact as the CQ 24
+  audit. Turning AQ on at CQ 24 only moved S2 75 → 78 and made the
+  worst-frame tail worse. The CQ number is the lever; extras are not a
+  substitute.
+
+2160p-anime / anime-fast GPU CQ is therefore **16**. Expected video rate on
+this title is roughly 3–5 Mb/s, not 1.5.
+
+### Film NVENC across resolutions (WowGirls / MetArtX)
+
+Same transparency bar, grain-free digital live-action instead of a BD remux:
+
+- WowGirls *Hypnotic Whisper Of Euphoria* — 3840×2160 AVC High 8-bit,
+  ~21 Mb/s, 59.94 fps, grain 0.0106 (nvenc-ok).
+- MetArtX *Kitchen Cravings 2* 4K — 3840×2160 AVC High 8-bit, ~25 Mb/s,
+  29.97 fps, grain 0.0074 (very clean). Native 1080p of the same title is
+  Constrained Baseline ~5 Mb/s and native 480p is ~1 Mb/s; those are
+  already-crushed web rungs, not masters. 1080p / 720p / 480p CQ was
+  judged on lanczos downscales of the 4K windows so the source picture
+  was still clean.
+
+Four 10 s windows per title. Uncapped `av1_nvenc` (same extras as the
+ffmpeg path). SDR VMAF is subjectively calibrated here.
+
+| Tier | Old CQ | Result | New CQ | Result |
+| --- | ---: | --- | ---: | --- |
+| 2160p film | 22 | VMAF 98.7–99.97 / p5 ≥97.8 / S2 80.6–84.5; 1:1 lace/skin hold | **22** (keep) | — |
+| 1080p film | 26 | VMAF ~98.3 / p5 95.5 / S2 80.4; sweater fuzz slightly soft | **22** | VMAF ~99.0 / p5 96.1–97.6 / S2 82.2–83.6 |
+| 720p film | 28 | VMAF ~97.8 / p5 94.9 / S2 81.6 | **24** | VMAF ~98.6 / p5 95.8–96.7 / S2 83.5–84.6 |
+| sd film | 30 | VMAF ~96.9 / p5 94.2 / min 92.3 / S2 80.3 | **24** | VMAF ~98.3 / p5 95.9–96.5 / S2 84.0–85.1 |
+
+1080p/720p/sd **anime** NVENC CQ is unchanged — no animation sources in
+this set. Do not copy the film −4/−6 step onto anime without measuring.
+
+Caveat: WowGirls is 60 fps 4K at only ~21 Mb/s AVC. Uncapped CQ 22 wanted
+~40–60 Mb/s on those windows (larger than the source). `transcode`'s 85%
+source-bitrate cap **will bind** on files like these and will pull quality
+below the uncapped scores. On a 40–80 Mb/s UHD remux the cap still should
+not bind. That is a source-class difference, not a reason to raise CQ.
+
+### Film CPU on the same WowGirls / MetArtX windows
+
+Same refs as the NVENC audit above, `svt-av1-hdr` preset/tune from the
+table, grain off.
+
+| Tier | Old CRF (hdr) | Result | New CRF (hdr / mainline) | Result |
+| --- | ---: | --- | ---: | --- |
+| 2160p film | 26 | VMAF 97.3–99.7 / p5 ≥96.3 / S2 76–80. Lace slightly softer than NVENC CQ 22; CRF 20 only +2 S2 for +50% size | **26 / 19** (keep) | Lab Mutation remux A/B still stands; S2 lag here is diminishing returns vs a 21 Mb/s 60 fps AVC master |
+| 1080p film | 31 | VMAF p5 ~93 / S2 ~75 — fail | **20 / 13** | p5 95.7–97.2 / S2 78.7–80.5 |
+| 720p film | 33 | p5 ~92 / S2 ~75 — fail | **22 / 15** | p5 95.3–96.7 / S2 79.7–81.1 |
+| sd film | 35 | p5 ~91 / S2 ~74 — fail | **24 / 17** | p5 95.2–96.6 / S2 79.8–81.2 |
+
+Anime CPU CRF at 1080p/720p/sd is unchanged.
+
+### Lowest-class webcam (VDH)
+
+`/mnt/exos1/downloads/VDH` — 75 Video DownloadHelper portrait HLS
+captures, all h264 8-bit, 0.69–8.28 Mb/s (median 1.40), 12.8 GiB /
+16.3 h. Grain 0.006–0.008 on the five-file sample (nvenc-ok). Auto
+class with today's height-based ceilings: lowest 46 / stream 23 /
+webrip 6 / master 0.
+
+Every file is portrait. `resolution_tier` keys off **height**, so
+480×854 becomes 1080p and 1080×1920 becomes 2160p. That is how a
+0.95 Mb/s 480-wide capture lands in `lowest` (below the 1080p 1.5 Mb/s
+ceiling) — correct *content* class, wrong reason. Do **not** flip the
+bitrate floors to `min(width,height)` without retuning: the SD master
+floor of 4 Mb/s would promote two 396×858 @ 5.6 Mb/s captures to
+`master`.
+
+Five files × three 10 s windows, uncapped NVENC master / stream /
+lowest CQ (plus CPU on the middle window). Full-frame `compare`.
+Artifacts: `.cache/psammophis/compare/vdh-lowest/`.
+
+| Stop | Mean VMAF / p5 / S2 (15 windows) | Encode vs source |
+| --- | --- | ---: |
+| master (CQ 22/24) | 97.54 / 95.87 / 82.00 | **2.01×** |
+| stream (+8 CQ) | 96.08 / 94.19 / 76.81 | **0.95×** |
+| lowest (+12 CQ) | 94.75 / 92.66 / 73.05 | **0.65×** |
+
+Master is the only remux-bar stop and doubles the file. Stream is the
+near-transparent-to-this-HLS stop that stays near source size. Lowest
+is size-sane and close on stills, but Gebby w1 dropped to VMAF p5 90.6
+/ S2 67 — a second generation of mush. On shaky 30 fps 1080×1920
+(Biawak) even master only reaches p5 92.3; the source is the ceiling.
+
+**Leave +12 in place.** If a VDH-like file should stay near-transparent
+to its own HLS, override `--source-class stream` rather than treating
+it as a remux. Full tables, stills, and the portrait-tier discussion:
+`notes/source-class-audit.md`.
 
 ## Denoise + nvenc + grav1synth: an nvenc-speed alternative to grain-aware CPU routing
 

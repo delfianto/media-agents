@@ -69,6 +69,20 @@ def test_map_nvenc_preset():
     assert nvencc_cmd.map_nvenc_preset("p1") == "performance"
 
 
+def test_nvencc_quality_args_follow_preset_extras():
+    anime = presets.PRESETS[("2160p", "anime")]
+    args = nvencc_cmd.nvencc_quality_args(anime)
+    assert args[args.index("--tune") + 1] == "uhq"
+    assert "--aq" in args
+    assert "--aq-temporal" in args
+    assert args[args.index("--aq-strength") + 1] == "8"
+    sd = presets.PRESETS[("sd", "film")]
+    sd_args = nvencc_cmd.nvencc_quality_args(sd)
+    assert "--aq" in sd_args
+    assert "--aq-temporal" not in sd_args
+    assert "--aq-strength" not in sd_args
+
+
 def test_build_nvencc_command_includes_dv_flags():
     probed = _probed(video_extra={"dolby_vision": {"dv_profile": 8}})
     cmd = nvencc_cmd.build_nvencc_command("in.mkv", "out.mkv", probed, _preset(), gpu_index=0)
@@ -80,7 +94,16 @@ def test_build_nvencc_command_includes_dv_flags():
     assert cmd[cmd.index("--dolby-vision-profile") + 1] == "10.1"
     assert "--dhdr10-info" not in cmd
     assert "--qvbr" in cmd
+    assert cmd[cmd.index("--qvbr") + 1] == str(_preset().nvenc_cq)
     assert "--max-bitrate" in cmd  # 85% of 60 Mbps source video
+    # Quality extras must match the ffmpeg av1_nvenc path (VE remux encode
+    # previously omitted these and logged Lookahead off / AQ off / Tuning hq).
+    assert cmd[cmd.index("--tune") + 1] == "uhq"
+    assert cmd[cmd.index("--lookahead") + 1] == "32"
+    assert cmd[cmd.index("--bref-mode") + 1] == "middle"
+    assert "--aq" in cmd
+    assert "--aq-temporal" in cmd
+    assert cmd[cmd.index("--aq-strength") + 1] == "10"
 
 
 def test_build_nvencc_command_includes_hdr10_plus_flags():

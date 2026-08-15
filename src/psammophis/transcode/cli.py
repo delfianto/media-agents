@@ -10,6 +10,11 @@ from psammophis.medialib import av1_presets as presets
 from psammophis.medialib.gpu import detect_av1_nvenc_gpu
 from psammophis.medialib.grain import GRAIN_CPU_THRESHOLD, measure_grain
 from psammophis.medialib.humansize import human_size
+from psammophis.medialib.sourceclass import (
+    SOURCE_CLASSES,
+    apply_source_class,
+    classify_source,
+)
 from psammophis.medialib.svt import detect_svt_implementation
 from psammophis.medialib.videoprobe import probe_file
 from psammophis.medialib.walk import walk_media_files
@@ -152,7 +157,10 @@ def cmd_probe(args):
         else:
             dynamic_range = "SDR"
         tier = presets.resolution_tier(video["height"])
-        preset = presets.select_preset(video["height"], args.profile, hdr)
+        classified = classify_source(probed, override=args.source_class)
+        preset = apply_source_class(
+            presets.select_preset(video["height"], args.profile, hdr), classified.name
+        )
         size_desc = human_size(probed["format"].get("size"))
         grain = None
         if not args.no_grain_routing and av1_backend.grain_routing_applies(
@@ -227,6 +235,10 @@ def cmd_probe(args):
             f"      {video['width']}x{video['height']} ({tier}) {video['codec_name']} "
             f"{video.get('profile') or ''} {dynamic_range}  size={size_desc}"
         )
+        bps = (
+            f"{classified.video_bps / 1e6:.1f} Mb/s" if classified.video_bps else "unknown bitrate"
+        )
+        print(f"      source-class: {classified.name} ({bps}; {classified.reason})")
         print(f"      preset: {preset.name} -- {preset.description}")
         active_crf = presets.svt_crf(preset, svt_implementation)
         print(
@@ -300,8 +312,16 @@ def cmd_list_presets(args):
         "\nHDR preserves 10-bit color and HDR metadata without changing the CRF/CQ quality target."
     )
     print(
+        "\nSource class (auto-detected from codec/profile/bitrate; override with "
+        "--source-class master|webrip|stream|lowest) raises CRF/CQ for webrip "
+        "(+3 CRF / +4 CQ), stream (+6 / +8), and lowest (+10 / +12) so those "
+        "files are not treated as Blu-ray masters. The table above is the "
+        "master calibration."
+    )
+    print(
         f"Output bitrate is additionally capped to {presets.MAX_BITRATE_FRACTION_OF_SOURCE:.0%} "
-        "of each source file's own bitrate by default (--max-bitrate-fraction / --no-bitrate-cap)."
+        "of each source file's own bitrate by default (stream 70%, lowest 60%, "
+        "unless --max-bitrate-fraction / --no-bitrate-cap is set)."
     )
 
 
@@ -315,8 +335,10 @@ def cmd_run(args):
     output_dir = Path(output_dir_str) if output_dir_str else None
     if args.no_bitrate_cap:
         max_bitrate_fraction = None
+        bitrate_cap_from_class = False
     else:
         max_bitrate_fraction = _resolve(args.max_bitrate_fraction, cfg.max_bitrate_fraction)
+        bitrate_cap_from_class = args.max_bitrate_fraction is None
     single_audio_track = not args.all_audio_tracks
     audio_copy = _resolve(args.audio_copy, cfg.audio_copy)
     cover_image_path = Path(args.cover_image) if args.cover_image else None
@@ -493,6 +515,8 @@ def cmd_run(args):
                 on_heartbeat=_heartbeat if args.yes else None,
                 grain_routing=not args.no_grain_routing,
                 grain_threshold=args.grain_threshold,
+                source_class=args.source_class,
+                bitrate_cap_from_class=bitrate_cap_from_class,
             )
         except KeyboardInterrupt, CancellationRequested:
             if emitter is not None:
@@ -611,6 +635,19 @@ def cmd_purge_backups(args):
     return 0
 
 
+def _add_source_class_arg(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--source-class",
+        choices=("auto", *SOURCE_CLASSES),
+        default="auto",
+        help="Source delivery class: master (Blu-ray remux/raw), webrip (decent but "
+        "already compressed), stream (streaming-optimized), or lowest (recordings, "
+        "vintage, legacy codecs). auto (default) detects from codec, profile, and "
+        "bitrate. The master table is the quality calibration; the other classes "
+        "raise CRF/CQ so those files are not treated as remuxes.",
+    )
+
+
 def _add_grain_args(sp: argparse.ArgumentParser) -> None:
     sp.add_argument(
         "--grain-threshold",
@@ -690,6 +727,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         help="Preview keeping every matching-language audio track instead of just the single "
         "highest-quality one",
     )
+    _add_source_class_arg(sp)
     _add_grain_args(sp)
     sp.set_defaults(func=cmd_probe)
 
@@ -710,6 +748,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         help="Content profile for preset selection (default: film) -- pick 'anime' explicitly "
         "for animation/cartoon sources, it is never auto-detected from audio language",
     )
+    _add_source_class_arg(sp)
     sp.add_argument(
         "--backend",
         choices=("auto", "cpu", "nvenc", degrain.DEGRAIN_BACKEND),

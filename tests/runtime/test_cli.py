@@ -91,9 +91,11 @@ def test_renamed_features_accept_only_their_final_public_names(monkeypatch, caps
 
     assert cli.main(["--reporter", "quiet", "transcode", "list-presets"]) == 0
     assert cli.main(["--reporter", "quiet", "compare", "--help"]) == 0
+    assert cli.main(["--reporter", "quiet", "abtest", "--help"]) == 0
     assert loaded == [
         ("transcode", "transcode"),
         ("compare", "compare"),
+        ("abtest", "abtest"),
     ]
 
     assert cli.main(["av1-transcode"]) == 2

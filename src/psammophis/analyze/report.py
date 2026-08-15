@@ -13,6 +13,11 @@ from psammophis.medialib import av1_backend, colorinfo
 from psammophis.medialib import av1_presets as presets
 from psammophis.medialib.grain import GrainMeasurement
 from psammophis.medialib.humansize import human_size
+from psammophis.medialib.sourceclass import (
+    SourceClassification,
+    apply_source_class,
+    classify_source,
+)
 from psammophis.medialib.svt import SvtImplementation, implementation_params
 
 
@@ -24,6 +29,7 @@ class FileAnalysis:
     tier: str
     size: int | None
     preset: presets.Preset
+    source_class: SourceClassification
     backend: str
     engine: str
     nvencc_ok: bool
@@ -53,11 +59,15 @@ def build_analysis(
     grain: GrainMeasurement | None,
     svt_implementation: SvtImplementation,
     grain_threshold: float = av1_backend.GRAIN_CPU_THRESHOLD,
+    source_class: str = "auto",
 ) -> FileAnalysis:
     video = probed["video"]
     hdr = colorinfo.is_hdr(video)
     tier = presets.resolution_tier(video["height"])
-    preset = presets.select_preset(video["height"], profile, hdr)
+    classified = classify_source(probed, override=source_class)
+    preset = apply_source_class(
+        presets.select_preset(video["height"], profile, hdr), classified.name
+    )
     grain_score = grain.score if grain is not None else None
     try:
         backend = av1_backend.choose_backend(
@@ -80,6 +90,7 @@ def build_analysis(
         tier=tier,
         size=probed.get("format", {}).get("size"),
         preset=preset,
+        source_class=classified,
         backend=backend,
         engine=engine,
         nvencc_ok=nvencc_ok,
@@ -114,6 +125,9 @@ def format_analysis(a: FileAnalysis) -> str:
         f"    {video['width']}x{video['height']} ({a.tier}) {video['codec_name']} "
         f"{video.get('profile') or ''} {a.dynamic_range}  size={human_size(a.size)}"
     )
+    sc = a.source_class
+    bps = f"{sc.video_bps / 1e6:.1f} Mb/s" if sc.video_bps else "unknown bitrate"
+    lines.append(f"    source-class: {sc.name} ({bps}; {sc.reason})")
     lines.append(f"    preset: {a.preset.name} -- {a.preset.description}")
     lines.append(
         f"    cpu:   {a.svt_implementation.label} preset={a.preset.svt_preset} "
@@ -153,6 +167,9 @@ def analysis_to_dict(a: FileAnalysis) -> dict:
         "dynamic_range": a.dynamic_range,
         "size_bytes": a.size,
         "preset": a.preset.name,
+        "source_class": a.source_class.name,
+        "source_class_reason": a.source_class.reason,
+        "source_video_bps": a.source_class.video_bps,
         "backend": a.backend,
         "engine": a.engine,
         "backend_error": a.backend_error,

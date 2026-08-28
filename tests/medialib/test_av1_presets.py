@@ -26,6 +26,18 @@ def test_resolution_tier_boundaries(height, expected):
     assert presets.resolution_tier(height) == expected
 
 
+def test_portrait_uses_shorter_side_for_tier():
+    assert presets.is_portrait(480, 854) is True
+    assert presets.tier_extent(480, 854) == 480
+    assert presets.resolution_tier_for_frame(480, 854) == "sd"
+    assert presets.resolution_tier_for_frame(1080, 1920) == "1080p"
+    assert presets.resolution_tier_for_frame(3840, 2160) == "2160p"
+    sd = presets.select_preset(854, "film", hdr=False, width=480)
+    assert sd is presets.PRESETS[("sd", "film")]
+    hd = presets.select_preset(1920, "film", hdr=False, width=1080)
+    assert hd is presets.PRESETS[("1080p", "film")]
+
+
 def test_select_preset_sdr_matches_table():
     preset = presets.select_preset(1080, "film", hdr=False)
     assert preset is presets.PRESETS[("1080p", "film")]

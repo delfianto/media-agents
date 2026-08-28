@@ -17,8 +17,9 @@ Four classes:
 - ``lowest`` -- recorded sources, vintage films with dubious compression,
   legacy codecs (MPEG-2, DivX/Xvid, WMV), and similar. Spend even less.
 
-Detection is objective (codec, profile, bitrate vs resolution). Override
-with ``--source-class`` when the heuristic is wrong. Content profile
+Detection is objective (codec, profile, bitrate vs resolution, plus
+portrait geometry for phone/webcam HLS captures). Override with
+``--source-class`` when the heuristic is wrong. Content profile
 (film/anime) stays an explicit choice; this axis is independent.
 """
 
@@ -129,6 +130,7 @@ class SourceClassification:
     stream_ceiling_bps: int
     lowest_ceiling_bps: int
     override: bool = False
+    portrait: bool = False
 
     @property
     def recommended_cap_fraction(self) -> float:
@@ -145,6 +147,18 @@ def _is_baseline_profile(profile: str | None) -> bool:
     return "baseline" in text
 
 
+def is_portrait_capture(width: int, height: int, codec: str, pix_fmt: str | None) -> bool:
+    """Phone / webcam / VDH-style HLS: portrait 8-bit consumer encode.
+
+    10-bit or mezzanine codecs are left on the normal bitrate path even
+    when the frame is tall -- a portrait ProRes/HEVC master is rare but
+    should not be forced down to stream.
+    """
+    if not presets.is_portrait(width, height):
+        return False
+    return codec not in _MASTER_CODECS and not _is_10bit(pix_fmt)
+
+
 def classify_source(probed: dict, *, override: str = "auto") -> SourceClassification:
     """Return master/webrip/stream/lowest for a ``videoprobe.probe_file`` dict.
 
@@ -152,12 +166,14 @@ def classify_source(probed: dict, *, override: str = "auto") -> SourceClassifica
     wins and is recorded on the result.
     """
     video = probed.get("video") or {}
+    width = int(video.get("width") or 0)
     height = int(video.get("height") or 0)
-    tier = presets.resolution_tier(height)
+    tier = presets.resolution_tier_for_frame(width, height)
     master_floor = MASTER_FLOOR_BPS[tier]
     stream_ceiling = STREAM_CEILING_BPS[tier]
     lowest_ceiling = LOWEST_CEILING_BPS[tier]
     video_bps = presets.source_video_bitrate_bps(probed)
+    portrait = presets.is_portrait(width, height)
 
     if override != "auto":
         if override not in SOURCE_CLASSES:
@@ -170,6 +186,7 @@ def classify_source(probed: dict, *, override: str = "auto") -> SourceClassifica
             stream_ceiling_bps=stream_ceiling,
             lowest_ceiling_bps=lowest_ceiling,
             override=True,
+            portrait=portrait,
         )
 
     codec = (video.get("codec_name") or "").lower()
@@ -177,47 +194,59 @@ def classify_source(probed: dict, *, override: str = "auto") -> SourceClassifica
     pix_fmt = video.get("pix_fmt")
     bps_label = f"{video_bps / 1e6:.1f} Mb/s" if video_bps else "unknown bitrate"
 
-    if codec in _LOWEST_CODECS:
+    def _result(
+        name: SourceClassName, reason: str, *, override: bool = False
+    ) -> SourceClassification:
         return SourceClassification(
-            name="lowest",
-            reason=f"{codec} is a legacy/recording codec, not a modern delivery encode",
+            name=name,
+            reason=reason,
             video_bps=video_bps,
             master_floor_bps=master_floor,
             stream_ceiling_bps=stream_ceiling,
             lowest_ceiling_bps=lowest_ceiling,
+            override=override,
+            portrait=portrait,
+        )
+
+    if codec in _LOWEST_CODECS:
+        return _result(
+            "lowest",
+            f"{codec} is a legacy/recording codec, not a modern delivery encode",
+        )
+    # Portrait 8-bit phone/webcam/HLS (VDH). Height-based tiers called
+    # 480x854 "1080p" and 1080x1920 "2160p"; min-side SD master floor
+    # then promoted 5.6 Mb/s 396-wide captures to master. Cap at stream
+    # unless the min-side bitrate is truly at the lowest ceiling.
+    # See notes/source-class-audit.md.
+    if is_portrait_capture(width, height, codec, pix_fmt):
+        shape = f"{width}x{height} portrait {tier}"
+        if video_bps is not None and video_bps <= lowest_ceiling:
+            return _result(
+                "lowest",
+                f"{shape} capture at {bps_label} is at or below the lowest "
+                f"ceiling ({lowest_ceiling / 1e6:.1f} Mb/s)",
+            )
+        return _result(
+            "stream",
+            f"{shape} 8-bit capture is webcam/HLS-style, not a remux "
+            f"(VDH ladder: stream +8 CQ stayed near source size)",
         )
     if video_bps is not None and video_bps <= lowest_ceiling:
-        return SourceClassification(
-            name="lowest",
-            reason=(
-                f"{bps_label} {tier} is at or below the lowest ceiling "
-                f"({lowest_ceiling / 1e6:.1f} Mb/s)"
-            ),
-            video_bps=video_bps,
-            master_floor_bps=master_floor,
-            stream_ceiling_bps=stream_ceiling,
-            lowest_ceiling_bps=lowest_ceiling,
+        return _result(
+            "lowest",
+            f"{bps_label} {tier} is at or below the lowest ceiling "
+            f"({lowest_ceiling / 1e6:.1f} Mb/s)",
         )
     if _is_baseline_profile(profile):
-        return SourceClassification(
-            name="stream",
-            reason=f"{codec or 'video'} profile {profile!r} is a streaming/compatibility encode",
-            video_bps=video_bps,
-            master_floor_bps=master_floor,
-            stream_ceiling_bps=stream_ceiling,
-            lowest_ceiling_bps=lowest_ceiling,
+        return _result(
+            "stream",
+            f"{codec or 'video'} profile {profile!r} is a streaming/compatibility encode",
         )
     if video_bps is not None and video_bps <= stream_ceiling:
-        return SourceClassification(
-            name="stream",
-            reason=(
-                f"{bps_label} {tier} is at or below the stream ceiling "
-                f"({stream_ceiling / 1e6:.1f} Mb/s)"
-            ),
-            video_bps=video_bps,
-            master_floor_bps=master_floor,
-            stream_ceiling_bps=stream_ceiling,
-            lowest_ceiling_bps=lowest_ceiling,
+        return _result(
+            "stream",
+            f"{bps_label} {tier} is at or below the stream ceiling "
+            f"({stream_ceiling / 1e6:.1f} Mb/s)",
         )
     if video_bps is not None and video_bps >= master_floor:
         masterish = codec in _MASTER_CODECS or _is_10bit(pix_fmt)
@@ -229,14 +258,7 @@ def classify_source(probed: dict, *, override: str = "auto") -> SourceClassifica
             )
             if _is_10bit(pix_fmt):
                 why += ", 10-bit"
-            return SourceClassification(
-                name="master",
-                reason=why,
-                video_bps=video_bps,
-                master_floor_bps=master_floor,
-                stream_ceiling_bps=stream_ceiling,
-                lowest_ceiling_bps=lowest_ceiling,
-            )
+            return _result("master", why)
     if video_bps is None:
         reason = "bitrate unknown; not assuming master"
     else:
@@ -245,14 +267,7 @@ def classify_source(probed: dict, *, override: str = "auto") -> SourceClassifica
             f"({stream_ceiling / 1e6:.1f} Mb/s) and master "
             f"({master_floor / 1e6:.0f} Mb/s)"
         )
-    return SourceClassification(
-        name="webrip",
-        reason=reason,
-        video_bps=video_bps,
-        master_floor_bps=master_floor,
-        stream_ceiling_bps=stream_ceiling,
-        lowest_ceiling_bps=lowest_ceiling,
-    )
+    return _result("webrip", reason)
 
 
 def apply_source_class(preset: presets.Preset, source_class: SourceClassName) -> presets.Preset:

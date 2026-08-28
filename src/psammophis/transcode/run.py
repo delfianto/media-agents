@@ -147,7 +147,9 @@ def verify_output(
     new_probed = probe_file(new_path)
     if new_probed.get("video") is None:
         return False, "output has no video stream"
-    if not new_probed.get("audio"):
+    # Never-go-silent applies when the source had audio. A video-only
+    # capture (no audio stream at all) is allowed to stay video-only.
+    if original_probed.get("audio") and not new_probed.get("audio"):
         return False, "output has no audio stream"
 
     orig_dur = original_probed["format"].get("duration")
@@ -436,6 +438,25 @@ def _commit_in_place(
         raise
 
 
+def destination_path(
+    root: Path,
+    abs_path: Path,
+    output_dir: Path | None,
+    *,
+    mirror: bool = False,
+) -> Path:
+    """Where the converted .mkv lands.
+
+    In-place (no output_dir): next to the source, same stem. Flat output_dir:
+    ``output_dir / name.mkv``. Mirrored: ``output_dir / rel.mkv``.
+    """
+    if output_dir is None:
+        return abs_path.with_suffix(".mkv")
+    if mirror:
+        return (output_dir / abs_path.relative_to(root)).with_suffix(".mkv")
+    return (output_dir / abs_path.name).with_suffix(".mkv")
+
+
 def transcode_one(
     abs_path: Path,
     root: Path,
@@ -452,9 +473,11 @@ def transcode_one(
     audio_copy: bool = False,
     max_bitrate_fraction: float | None = presets.MAX_BITRATE_FRACTION_OF_SOURCE,
     output_dir: Path | None = None,
+    mirror_output: bool = False,
     cover_image_path: Path | None = None,
     auto_cover_art: bool = True,
     overwrite_existing: bool = False,
+    skip_existing: bool = False,
     on_progress: StructuredProgressCallback | None = None,
     on_phase: PhaseCallback | None = None,
     on_heartbeat: HeartbeatCallback | None = None,
@@ -463,14 +486,14 @@ def transcode_one(
     source_class: str = "auto",
     bitrate_cap_from_class: bool = False,
 ) -> tuple[TranscodeResult, dict | None]:
-    """When `output_dir` is set, the converted file is written directly into
-    that directory under its own filename (flat -- not mirroring `abs_path`'s
-    directory structure relative to `root`) and the original source is left
-    completely untouched -- no backup/delete step at all, since nothing
-    about the source changed. A destination filename that already exists is
-    left alone and reported as an error unless `overwrite_existing` is set.
-    `backup_dir` only applies to the default in-place mode, where the source
-    *is* replaced.
+    """When `output_dir` is set, the converted file is written there and the
+    original source is left completely untouched -- no backup/delete, since
+    nothing about the source changed. Default layout is flat (`output_dir /
+    name.mkv`). `mirror_output=True` keeps the path relative to `root`
+    (`output_dir / rel.mkv`) so a tree of webcam captures does not collide
+    on repeated filenames. A destination that already exists is left alone
+    and reported as an error unless `overwrite_existing` is set. `backup_dir`
+    only applies to the default in-place mode, where the source *is* replaced.
 
     Cover art: `cover_image_path` forces a specific image; otherwise, if
     `auto_cover_art` (the default), `find_sidecar_cover` looks for a
@@ -480,11 +503,7 @@ def transcode_one(
     error."""
     rel = abs_path.relative_to(root)
     resolved_cover = cover_image_path or (find_sidecar_cover(abs_path) if auto_cover_art else None)
-    final_path = (
-        (output_dir / abs_path.name).with_suffix(".mkv")
-        if output_dir
-        else abs_path.with_suffix(".mkv")
-    )
+    final_path = destination_path(root, abs_path, output_dir, mirror=mirror_output)
 
     if output_dir is not None and final_path.resolve(strict=False) == abs_path.resolve(
         strict=False
@@ -500,6 +519,13 @@ def transcode_one(
         )
 
     destination_collision = path_exists(final_path) and final_path != abs_path
+    if (
+        destination_collision
+        and skip_existing
+        and output_dir is not None
+        and not overwrite_existing
+    ):
+        return TranscodeResult(str(rel), "unchanged", f"already exists: {final_path}"), None
     if destination_collision and (output_dir is None or not overwrite_existing):
         return (
             TranscodeResult(
@@ -600,7 +626,13 @@ def transcode_one(
     hdr = colorinfo.is_hdr(video)
     classified = classify_source(probed, override=source_class)
     preset = apply_source_class(
-        presets.select_preset(video["height"], profile, hdr), classified.name
+        presets.select_preset(
+            int(video.get("height") or 0),
+            profile,
+            hdr,
+            width=int(video.get("width") or 0),
+        ),
+        classified.name,
     )
     if bitrate_cap_from_class:
         max_bitrate_fraction = classified.recommended_cap_fraction
@@ -684,7 +716,7 @@ def transcode_one(
     # source regardless of where the result is headed, which is confusing to
     # find and, with --output-dir pointed elsewhere, puts the in-progress file
     # nowhere near where anyone watching the destination would look for it.
-    tmp_dir = output_dir if output_dir is not None else abs_path.parent
+    tmp_dir = final_path.parent
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_dir / f".{abs_path.stem}.transcode-tmp.mkv"
     if path_exists(tmp_path):

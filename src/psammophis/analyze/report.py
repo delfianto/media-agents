@@ -63,10 +63,12 @@ def build_analysis(
 ) -> FileAnalysis:
     video = probed["video"]
     hdr = colorinfo.is_hdr(video)
-    tier = presets.resolution_tier(video["height"])
+    width = int(video.get("width") or 0)
+    height = int(video.get("height") or 0)
+    tier = presets.resolution_tier_for_frame(width, height)
     classified = classify_source(probed, override=source_class)
     preset = apply_source_class(
-        presets.select_preset(video["height"], profile, hdr), classified.name
+        presets.select_preset(height, profile, hdr, width=width), classified.name
     )
     grain_score = grain.score if grain is not None else None
     try:
@@ -121,8 +123,9 @@ def format_analysis(a: FileAnalysis) -> str:
         **implementation_params(a.svt_implementation, video.get("color_transfer")),
     }
     lines = [a.rel_path]
+    tier_note = f"{a.tier}, portrait" if a.source_class.portrait else a.tier
     lines.append(
-        f"    {video['width']}x{video['height']} ({a.tier}) {video['codec_name']} "
+        f"    {video['width']}x{video['height']} ({tier_note}) {video['codec_name']} "
         f"{video.get('profile') or ''} {a.dynamic_range}  size={human_size(a.size)}"
     )
     sc = a.source_class
@@ -170,6 +173,7 @@ def analysis_to_dict(a: FileAnalysis) -> dict:
         "source_class": a.source_class.name,
         "source_class_reason": a.source_class.reason,
         "source_video_bps": a.source_class.video_bps,
+        "portrait": a.source_class.portrait,
         "backend": a.backend,
         "engine": a.engine,
         "backend_error": a.backend_error,

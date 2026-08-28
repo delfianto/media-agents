@@ -22,6 +22,12 @@ from psammophis.runtime.context import AppContext, JournalConfigurationError
 from psammophis.runtime.journal import JournalError
 from psammophis.runtime.reporters import JsonlStderrBridge, select_reporter
 from psammophis.runtime.signals import CancellationRequested
+from psammophis.runtime.systemd_job import (
+    SystemdJobError,
+    format_submit_message,
+    strip_systemd_flags,
+    submit_user_service,
+)
 
 # Public command name -> (module path, callable name).
 _COMMANDS: dict[str, tuple[str, str]] = {
@@ -47,6 +53,23 @@ def _nonnegative_seconds(value: str) -> float:
     if not math.isfinite(seconds) or seconds < 0:
         raise argparse.ArgumentTypeError("must be a finite number zero or greater")
     return seconds
+
+
+def _submit_via_systemd(raw: list[str], command: str) -> int:
+    """Hand the job to systemd --user and return; do not run it in-process."""
+    try:
+        stripped, unit, force = strip_systemd_flags(raw)
+        result = submit_user_service(
+            command=command,
+            stripped_argv=stripped,
+            unit=unit,
+            force=force,
+        )
+    except SystemdJobError as exc:
+        print(exc, file=sys.stderr)
+        return exc.exit_code
+    print(format_submit_message(result))
+    return 0
 
 
 def _load_handler(command: str) -> Callable[..., Any]:
@@ -97,6 +120,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Force durable run journaling off",
     )
     parser.add_argument(
+        "--systemd",
+        action="store_true",
+        help=(
+            "Start the command as a systemd --user service and return immediately. "
+            "Required for multi-hour --yes encodes: no wall-clock timeout, "
+            "survives the chat session. Watch with systemctl/journalctl or "
+            "`runs list --active`."
+        ),
+    )
+    parser.add_argument(
+        "--systemd-unit",
+        default=None,
+        metavar="NAME",
+        help="Unit name without .service (default: psammophis-<command>)",
+    )
+    parser.add_argument(
+        "--systemd-force",
+        action="store_true",
+        help="Submit even if another psammophis transcode process is already running",
+    )
+    parser.add_argument(
         "command",
         nargs="?",
         choices=sorted(_COMMANDS),
@@ -132,7 +176,7 @@ def _split_globals(raw: list[str]) -> tuple[list[str], list[str]]:
             return globals_tokens, raw[i:]
         if tok in ("-h", "--help", "--version", "-V"):
             return raw, []
-        if tok in ("--reporter", "--progress-interval", "--state-dir"):
+        if tok in ("--reporter", "--progress-interval", "--state-dir", "--systemd-unit"):
             globals_tokens.append(tok)
             if i + 1 < len(raw):
                 globals_tokens.append(raw[i + 1])
@@ -143,11 +187,12 @@ def _split_globals(raw: list[str]) -> tuple[list[str], list[str]]:
             tok.startswith("--reporter=")
             or tok.startswith("--progress-interval=")
             or tok.startswith("--state-dir=")
+            or tok.startswith("--systemd-unit=")
         ):
             globals_tokens.append(tok)
             i += 1
             continue
-        if tok in ("--journal", "--no-journal"):
+        if tok in ("--journal", "--no-journal", "--systemd", "--systemd-force"):
             globals_tokens.append(tok)
             i += 1
             continue
@@ -177,6 +222,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             state_dir=None,
             journal=None,
             no_journal=False,
+            systemd=False,
+            systemd_unit=None,
+            systemd_force=False,
         )
     else:
         parser = _build_parser()
@@ -223,6 +271,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         except SystemExit as exc:
             code = exc.code
             return 0 if code is None else int(code) if isinstance(code, int) else 1
+
+    if getattr(global_ns, "systemd", False):
+        if command == "runs":
+            print(
+                "--systemd does not apply to `runs`; that command inspects "
+                "journals and user units in-process",
+                file=sys.stderr,
+            )
+            return 2
+        if command == "transcode" and "--yes" not in feature_args:
+            print(
+                "--systemd is for applied --yes work; a dry-run should stay "
+                "in-process so you can read the planned command",
+                file=sys.stderr,
+            )
+            return 2
+        return _submit_via_systemd(raw, command)
 
     journal: bool | None
     if getattr(global_ns, "no_journal", False):

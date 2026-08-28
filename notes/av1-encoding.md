@@ -19,7 +19,7 @@ Resolution × film/anime is not enough. The third axis is **how the file was del
 | `stream` | Heavily streaming-optimized | Constrained/Baseline profile, **or** bitrate at/below the stream ceiling (4K 8 Mb/s, 1080p 3.5, 720p 1.8, SD 1.2) but above lowest | +6 CRF / +8 CQ; cap defaults to 70% of source |
 | `lowest` | Recordings, vintage films with dubious compression, legacy codecs (MPEG-2, DivX/Xvid, WMV) | Legacy codec family, **or** bitrate at/below the lowest ceiling (4K 3 Mb/s, 1080p 1.5, 720p 0.8, SD 0.6) | +10 CRF / +12 CQ; cap defaults to 60% of source |
 
-`--source-class auto` (default) runs `sourceclass.classify_source`. Override when the heuristic is wrong. Content profile (film/anime) stays explicit.
+`--source-class auto` (default) runs `sourceclass.classify_source`. Portrait 8-bit phone/webcam/HLS captures use the shorter side for the resolution tier and cap at `stream` (VDH ladder: remux CQ was 2× the source; stream +8 CQ stayed near it). Override when the heuristic is wrong. Content profile (film/anime) stays explicit.
 
 The non-master deltas are **starting points**, not a fourth full preset table. webrip +4 CQ is the WowGirls overspend measurement (uncapped CQ 22 wanted 40–60 Mb/s from a 21 Mb/s 4K AVC). stream +8 / lowest +12 were bounded against 75 Video DownloadHelper webcam captures (see "Lowest-class webcam (VDH)" below and `notes/source-class-audit.md`). Validate a new cell with `compare` before treating it as master-grade evidence. Probe/analyze print `source-class:` on every file so a mis-bucket is visible before `--yes`.
 

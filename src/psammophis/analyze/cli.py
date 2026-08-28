@@ -66,7 +66,8 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         choices=("auto", *SOURCE_CLASSES),
         default="auto",
         help="Source delivery class (master/webrip/stream/lowest). auto detects "
-        "from codec, profile, and bitrate. See transcode --source-class.",
+        "from codec, profile, bitrate, and portrait webcam/HLS geometry. "
+        "See transcode --source-class.",
     )
     p.add_argument(
         "--grain-threshold",

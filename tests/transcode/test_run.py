@@ -49,6 +49,51 @@ def _patch_new_probed(monkeypatch, new_video, *, duration=9326.6, size=45_000_00
     monkeypatch.setattr(run_mod, "_decode_spot_check", lambda path: (True, "ok"))
 
 
+def test_verify_output_allows_video_only_when_source_has_no_audio(monkeypatch, tmp_path):
+    orig = _probed(_video())
+    orig["audio"] = []
+    new_video = _video()
+    new_video["statistics_tags"] = {
+        "BPS": "38000000",
+        "NUMBER_OF_BYTES": "44000000000",
+    }
+    monkeypatch.setattr(
+        run_mod,
+        "probe_file",
+        lambda path: {
+            "video": new_video,
+            "audio": [],
+            "format": {"duration": 9326.6, "size": 40_000_000_000},
+        },
+    )
+    monkeypatch.setattr(run_mod, "_decode_spot_check", lambda path: (True, "ok"))
+    ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv")
+    assert ok is True
+    assert "smaller" in detail
+
+
+def test_verify_output_still_rejects_dropped_audio_when_source_had_audio(monkeypatch, tmp_path):
+    orig = _probed(_video())
+    new_video = _video()
+    new_video["statistics_tags"] = {
+        "BPS": "38000000",
+        "NUMBER_OF_BYTES": "44000000000",
+    }
+    monkeypatch.setattr(
+        run_mod,
+        "probe_file",
+        lambda path: {
+            "video": new_video,
+            "audio": [],
+            "format": {"duration": 9326.6, "size": 40_000_000_000},
+        },
+    )
+    monkeypatch.setattr(run_mod, "_decode_spot_check", lambda path: (True, "ok"))
+    ok, detail = run_mod.verify_output(orig, tmp_path / "out.mkv")
+    assert ok is False
+    assert detail == "output has no audio stream"
+
+
 def test_verify_output_passes_when_dv_present_and_color_tags_intact(monkeypatch, tmp_path):
     orig = _probed(_video(dolby_vision={"dv_profile": 7}))
     _patch_new_probed(monkeypatch, _video(dolby_vision={"dv_profile": 10}))
@@ -211,6 +256,19 @@ def test_no_backup_different_extension_installs_before_deleting_source(tmp_path)
     assert not source.exists()
     assert not temporary.exists()
     assert destination.read_text() == "verified"
+
+
+def test_destination_path_flat_vs_mirror(tmp_path):
+    source = tmp_path / "Live" / "Gebby" / "show.mp4"
+    out = tmp_path / "AV1"
+    assert run_mod.destination_path(tmp_path, source, out, mirror=False) == out / "show.mkv"
+    assert (
+        run_mod.destination_path(tmp_path, source, out, mirror=True)
+        == out / "Live" / "Gebby" / "show.mkv"
+    )
+    assert run_mod.destination_path(tmp_path, source, None, mirror=True) == source.with_suffix(
+        ".mkv"
+    )
 
 
 def test_output_directory_can_never_map_result_onto_source(tmp_path):

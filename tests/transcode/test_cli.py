@@ -23,7 +23,17 @@ def test_flat_output_collisions_are_detected_before_encoding(tmp_path):
     first = tmp_path / "Movies" / "Title" / "feature.mp4"
     second = tmp_path / "TV" / "Title" / "feature.mkv"
 
-    assert _output_collisions(output, [first, second]) == {output / "feature.mkv": [first, second]}
+    assert _output_collisions(output, [first, second], root=tmp_path, mirror=False) == {
+        output / "feature.mkv": [first, second]
+    }
+
+
+def test_mirrored_output_does_not_collide_on_same_filename(tmp_path):
+    output = tmp_path / "converted"
+    first = tmp_path / "Movies" / "Title" / "feature.mp4"
+    second = tmp_path / "TV" / "Title" / "feature.mkv"
+
+    assert _output_collisions(output, [first, second], root=tmp_path, mirror=True) == {}
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-0.1", "1.1"])
@@ -44,6 +54,14 @@ def test_bitrate_cap_flags_are_mutually_exclusive(tmp_path):
                 "--no-bitrate-cap",
             ]
         )
+
+
+def test_skip_existing_and_mirror_require_output_dir(tmp_path):
+    parser = build_parser(str(tmp_path))
+    skip = parser.parse_args(["run", "--skip-existing", "--output-dir", "/tmp/out"])
+    assert skip.skip_existing is True
+    mirror = parser.parse_args(["run", "--mirror", "--output-dir", "/tmp/out"])
+    assert mirror.mirror is True
 
 
 def test_audio_copy_flag_accepted_on_run_and_probe(tmp_path):

@@ -49,6 +49,8 @@ Sample text output for one file:
 Some Movie (2001)/Some Movie (2001).mkv
     1920x1080 (1080p) hevc Main 10 HDR10  size=38.2 GiB
     source-class: master (32.0 Mb/s; hevc 32.0 Mb/s 1080p meets the master floor (12 Mb/s), 10-bit)
+
+Portrait webcam/HLS captures print `(sd, portrait)` (or 720p/1080p) and `source-class: stream` — `auto` uses the shorter side for the tier and will not treat a 480×854 VDH rip as a 1080p remux.
     preset: 1080p-film -- 1080p live-action Blu-ray remux -- the common case
     cpu:   preset=4 crf=24 tune=0 film-grain=0 extra={'enable-variance-boost': '1'}
     nvenc: preset=p7 tune=uhq cq=22 extra={'spatial-aq': '1', 'temporal-aq': '1', 'aq-strength': '10'}

@@ -131,9 +131,10 @@ From a media-library root where this repository is symlinked as `.agents`:
 .agents/run.sh track-strip stats
 .agents/run.sh transcode probe --path "Dune"
 .agents/run.sh --reporter jsonl transcode run --path "Dune" --yes
+.agents/run.sh --systemd --reporter jsonl transcode run --path "Dune" --yes
 ```
 
-`run.sh` is the human-friendly launcher. `uv run psammophis ...` is the direct project entry point. For automation or an LLM, use `--reporter jsonl`: it emits versioned lifecycle, progress-heartbeat, result, and completion events while keeping command output structured and durable run journals available through `runs show` and `runs events`.
+`run.sh` is the human-friendly launcher. `uv run psammophis ...` is the direct project entry point. For automation or an LLM, use `--reporter jsonl`: it emits versioned lifecycle, progress-heartbeat, result, and completion events while keeping command output structured and durable run journals available through `runs show` and `runs events`. Multi-hour `--yes` work is started with `--systemd` (a user unit with no start timeout) so a chat-tool deadline cannot kill the encode.
 
 ## Skills
 

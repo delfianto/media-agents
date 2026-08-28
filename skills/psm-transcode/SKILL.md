@@ -1,6 +1,6 @@
 ---
 name: psm-transcode
-description: Use when the user wants a remux-transparent (or near-transparent) AV1 encode from a high-quality HEVC Blu-ray/UHD remux, with Opus audio. Size reduction is a consequence of hitting that quality bar, not the goal — a tiny file that smears detail has failed. Handles 4K HDR/Dolby Vision, 1080p film, anime/cartoon, and older catalog sources; supports high-quality CPU/libsvtav1 and faster Ada-or-newer NVIDIA GPU/av1_nvenc paths with live progress. Auto mode measures grain/noise and routes heavily grainy sources to CPU, caps output bitrate below the source, supports a separate output directory, language filtering, and persistent .env settings. Triggers on "convert/re-encode to AV1", "shrink this remux", "transcode to AV1 and Opus", "use GPU/NVENC", or reducing media size while preserving quality. Use `psm-analyze` for a read-only decision preview and `psm-track-strip` when codecs should remain unchanged.
+description: Use when the user wants a remux-transparent (or near-transparent) AV1 encode from a high-quality HEVC Blu-ray/UHD remux, with Opus audio. Size reduction is a consequence of hitting that quality bar, not the goal — a tiny file that smears detail has failed. Handles 4K HDR/Dolby Vision, 1080p film, anime/cartoon, and older catalog sources; supports high-quality CPU/libsvtav1 and faster Ada-or-newer NVIDIA GPU/av1_nvenc paths with live progress. Auto mode measures grain/noise and routes heavily grainy sources to CPU, caps output bitrate below the source, supports a separate output directory, language filtering, and persistent .env settings. Applied `run --yes` work MUST be submitted with the global `--systemd` flag (a systemd --user unit, no wall-clock timeout). Triggers on "convert/re-encode to AV1", "shrink this remux", "transcode to AV1 and Opus", "use GPU/NVENC", or reducing media size while preserving quality. Use `psm-analyze` for a read-only decision preview and `psm-track-strip` when codecs should remain unchanged.
 allowed-tools:
     - Bash
 metadata:
@@ -22,6 +22,23 @@ The implementation lives at `src/psammophis/transcode/` inside the packaged appl
 
 Run from the media-library root; the launcher loads `.agents/.envrc` before uv starts.
 
+**`--yes` encodes run on systemd. This is not optional.** `--systemd` is a
+global flag (before `transcode`). It starts a `Type=simple` user unit
+(`psammophis-transcode.service`) with `TimeoutStartSec=infinity` and returns
+immediately. Do not hold a chat-tool call over `run --yes`. Do not set a
+tool-call timeout on an encode. Do not use `setsid` as the substitute.
+Dry-run (`run` without `--yes`), `probe`, and `list-presets` stay in-process.
+
+```bash
+.agents/run.sh --systemd --reporter jsonl --progress-interval 60 \
+  transcode run --path "Some Movie" --yes
+```
+
+Watch / stop with `systemctl --user status psammophis-transcode.service`,
+`journalctl --user -u psammophis-transcode.service -f`,
+`.agents/run.sh runs unit`, `.agents/run.sh runs list --active`,
+`.agents/run.sh runs stop`. See [`notes/process-cancellation.md`](../../notes/process-cancellation.md).
+
 1. **`probe`** - Read-only. Reports each file's resolution/dynamic range (SDR/HDR10/Dolby Vision)/audio layout, and exactly which preset and backend `run` would pick for it.
    ```bash
    .agents/run.sh transcode probe --path "Some Movie"
@@ -38,30 +55,39 @@ Run from the media-library root; the launcher loads `.agents/.envrc` before uv s
    # dry run (safe, default) - always do this first and read the printed command
    .agents/run.sh transcode run --path "Some Movie"
 
-   # execute for real, one file/show at a time
-   .agents/run.sh transcode run --path "Some Movie" --yes
+   # execute for real — always --systemd; one file/show at a time
+   .agents/run.sh --systemd --reporter jsonl transcode run --path "Some Movie" --yes
 
    # anime/cartoon sources: --profile is never auto-detected, see below
-   .agents/run.sh transcode run --path "Some Anime" --profile anime --yes
+   .agents/run.sh --systemd --reporter jsonl transcode run --path "Some Anime" --profile anime --yes
 
-   # write converted files elsewhere instead of swapping in place -- flat,
-   # under their own filename directly in --output-dir (not mirroring the
-   # source's directory structure), and the source is never touched in
-   # this mode (no backup/delete either)
-   .agents/run.sh transcode run --path "Some Movie" --output-dir /converted --yes
+   # write converted files elsewhere instead of swapping in place. Default
+   # is flat (output-dir/name.mkv). --mirror keeps the path under --root.
+   # The source is never touched in this mode (no backup/delete either).
+   .agents/run.sh --systemd --reporter jsonl transcode run \
+     --path "Some Movie" --output-dir /converted --yes
+   .agents/run.sh --systemd --reporter jsonl transcode --root /inbox run \
+     --include-root-files --output-dir /converted --mirror --backend nvenc --yes
+   # resume a long --output-dir batch without re-encoding finished files
+   .agents/run.sh --systemd --reporter jsonl transcode --root /inbox run \
+     --include-root-files --output-dir /converted --mirror --skip-existing --yes
 
    # --output-dir refuses to clobber a pre-existing file at the destination
    # unless told to
-   .agents/run.sh transcode run --path "Some Movie" --output-dir /converted --overwrite-existing --yes
+   .agents/run.sh --systemd --reporter jsonl transcode run \
+     --path "Some Movie" --output-dir /converted --overwrite-existing --yes
 
    # keep every audio/subtitle track instead of the single-best-eng-track default
-   .agents/run.sh transcode run --path "Some Movie" --audio-lang all --subtitle-lang all --yes
+   .agents/run.sh --systemd --reporter jsonl transcode run \
+     --path "Some Movie" --audio-lang all --subtitle-lang all --yes
 
    # keep the original audio untouched (bit-exact stream copy, no Opus re-encode)
-   .agents/run.sh transcode run --path "Some Movie" --audio-copy --yes
+   .agents/run.sh --systemd --reporter jsonl transcode run \
+     --path "Some Movie" --audio-copy --yes
 
    # force a specific poster instead of auto-detecting poster.jpg/cover.jpg next to the source
-   .agents/run.sh transcode run --path "Some Movie" --cover-image /path/to/poster.jpg --yes
+   .agents/run.sh --systemd --reporter jsonl transcode run \
+     --path "Some Movie" --cover-image /path/to/poster.jpg --yes
 
    # skip grain measurement (faster dry run), or override its cpu-preference threshold
    .agents/run.sh transcode run --path "Some Movie" --no-grain-routing
@@ -92,7 +118,7 @@ Everything is a CLI flag by default, but `--output-dir`, `--audio-lang`, `--subt
 
 ## Before running `--yes` against anything - always confirm scope with the user first
 
-This is a lossy, one-way, hours-long operation on the user's real media, not a quick reversible remux - **always confirm scope with the user before `run --yes`** (which file(s)/show(s), which profile, which backend), same as track-strip's rule for `apply --yes` but more so given the cost of getting it wrong.
+This is a lossy, one-way, hours-long operation on the user's real media, not a quick reversible remux - **always confirm scope with the user before `run --yes`** (which file(s)/show(s), which profile, which backend), same as track-strip's rule for `apply --yes` but more so given the cost of getting it wrong. After they confirm, submit with `--systemd` — never as a foreground chat command.
 
 ## Source class: `auto` (default), `master`, `webrip`, `stream`, or `lowest`
 
@@ -102,6 +128,8 @@ Resolution × film/anime is not enough. `auto` classifies each file from codec, 
 - **webrip** -- decent commercial encode, already more compressed than a remux. Raises CRF/CQ so a 21 Mb/s 4K AVC is not treated as a 62 Mb/s remux.
 - **stream** -- heavily streaming-optimized (Baseline profile or low bitrate). Raises CRF/CQ further and defaults the bitrate cap to 70%.
 - **lowest** -- recordings, vintage films with dubious compression, legacy codecs (MPEG-2, DivX/Xvid, WMV). Raises CRF/CQ most and defaults the cap to 60%.
+
+Portrait 8-bit phone/webcam/HLS captures (Video DownloadHelper-style: 480×854, 1080×1920, …) are detected from geometry, not from a folder name. `auto` uses the **shorter** side for the resolution tier (so 480×854 is SD, not fake 1080p) and **caps the class at `stream`** — never master/webrip — because those files are already the quality ceiling. A 396-wide capture at 5.6 Mb/s must not become `master` just because the SD master floor is 4 Mb/s. Measured VDH ladder: stream +8 CQ stayed near source size; remux CQ doubled the file. Override with `--source-class` when a real portrait remux shows up.
 
 Override with `--source-class master|webrip|stream|lowest` when the heuristic is wrong. Probe/analyze print the class and reason on every file.
 
@@ -122,15 +150,15 @@ Resolution and HDR/Dolby Vision are objective facts `probe` reads straight off t
 
 ## Monitoring a running encode
 
-Interactive runs render a Rich progress bar on stderr. Redirected human runs use newline-delimited plain progress, while `--reporter jsonl` emits versioned structured events for automation; command results remain on stdout. The full encoder feed is also written live to `<root>/.cache/transcode/logs/<relative-path>.log`, so `tail -f` remains a diagnostic fallback. Keep observing the original foreground process when possible, or use `runs show/events` against its durable run ID; quiet intervals are not a reason to launch the encode again.
+Interactive runs render a Rich progress bar on stderr. Redirected human runs use newline-delimited plain progress, while `--reporter jsonl` emits versioned structured events for automation; command results remain on stdout. The full encoder feed is also written live to `<root>/.cache/transcode/logs/<relative-path>.log`, so `tail -f` remains a diagnostic fallback. A chat agent submits `--yes` with `--systemd` and then watches `runs unit` / `runs show` / `journalctl --user -u psammophis-transcode.service` — it does not hold the encode in the tool call. Quiet intervals are not a reason to launch the encode again.
 
 ## Safety model
 
 - `run` without `--yes` never writes anything, even though it does a live probe of every targeted file - safe to run as often as needed to check what would happen.
-- When executing: encodes to a temp file next to the original first, recalculates Matroska per-track BPS/duration/frame/byte statistics with `mkvpropedit`, then verifies the result (has video, has audio, duration matches within 2%, no copied source-codec bitrate/byte counters on transcoded streams -- the audio counters check stands down when `--audio-copy` is set, since a copied track legitimately carries its source's exact bytes, a head-only decode spot check, and - if the source was HDR - that the output is still tagged HDR and still carries mastering-display metadata if the source did; if the source had Dolby Vision or HDR10+, that dynamic metadata must still be present on the output) *before* the original is touched. The success report gives measured before/after sizes and overall bitrates; a file that ends up larger than its source gets flagged with a warning rather than silently accepted.
+- When executing: encodes to a temp file next to the original first, recalculates Matroska per-track BPS/duration/frame/byte statistics with `mkvpropedit`, then verifies the result (has video, has audio unless the source itself had none, duration matches within 2%, no copied source-codec bitrate/byte counters on transcoded streams -- the audio counters check stands down when `--audio-copy` is set, since a copied track legitimately carries its source's exact bytes, a head-only decode spot check, and - if the source was HDR - that the output is still tagged HDR and still carries mastering-display metadata if the source did; if the source had Dolby Vision or HDR10+, that dynamic metadata must still be present on the output) *before* the original is touched. The success report gives measured before/after sizes and overall bitrates; a file that ends up larger than its source gets flagged with a warning rather than silently accepted.
 - Originals are staged safely at `.cache/transcode/originals/<relative path>` before the verified replacement is installed; same-filesystem backups use a hard link and cross-filesystem backups use a complete, fsynced copy. The source path remains live until the atomic commit. Use `purge-backups` once re-encoded files are confirmed good. Pass `--no-backup` to replace originals without retaining that recovery copy (verification still gates it). None of this applies when `--output-dir` is set - the source is never touched at all in that mode, so there's nothing to back up.
 - Output is always `.mkv` regardless of the source container (AV1 in MP4 works too, but MKV is this library's convention and handles font attachments/multiple subtitle tracks better) - a `.mp4` source ends up backed up under its original extension while the new file takes over the same directory (or lands flat in `--output-dir`, under its own filename only - not mirroring the source's directory structure) under a `.mkv` name.
-- **`--output-dir` writes flat, not mirrored**: the converted file lands at `<output-dir>/<source filename>.mkv`, regardless of how deep the source sits under `--root`. A pre-existing file at that destination is left alone and reported as an error unless `--overwrite-existing` is passed. If `--output-dir` (or a custom `--backup-dir`/`--log-dir`) resolves to a plain subdirectory of `--root` itself, it's excluded from the file walk so a freshly-written output can never be rediscovered as a new source and re-encoded on top of itself in the same invocation (see `../../notes/track-filtering.md`).
+- **`--output-dir` is flat by default**: `<output-dir>/<source filename>.mkv`. Pass **`--mirror`** to write `<output-dir>/<path-relative-to-root>.mkv` (needed when many folders share filenames). A pre-existing destination is left alone unless `--overwrite-existing` is passed. If `--output-dir` (or a custom `--backup-dir`/`--log-dir`) resolves to a subdirectory of `--root`, it is excluded from the file walk. Loose files sitting directly in `--root` are skipped unless `--include-root-files` is set.
 - Audio/subtitle tracks matching `--audio-lang`/`--subtitle-lang` (default `eng`) are kept and re-encoded/copied; attachments (fonts) are always kept regardless. This is a plain by-language filter, not the nuanced policy (commentary/SDH/anime-release detection) `track-strip` owns - run that skill first for anything beyond "just keep English". Pass `--no-subtitles` to drop every subtitle track regardless of language (e.g. if a source subtitle codec can't mux into Matroska).
 - Sequential by design, same as track-strip's `apply`/`transcode` - no `--jobs` flag. An encode is CPU/GPU-bound rather than disk-bound the way a stream-copy remux is, but running two at once on the same GPU or the same set of CPU cores would just make both slower, not faster.
 
@@ -140,23 +168,24 @@ Interactive runs render a Rich progress bar on stderr. Redirected human runs use
 
 ## Progress for long-running applied work
 
-For multi-hour encodes or large batch mutations, prefer JSONL progress so the
-session can be observed without ANSI noise:
+`--yes` is already a systemd unit (see "Running commands"). After submit,
+observe that unit and the durable journal — do not relaunch because an
+interval was quiet.
 
 ```bash
-.agents/run.sh --reporter jsonl --progress-interval 30 transcode run ... --yes
-```
-
-- Continue observing the **same** process/session; do not relaunch an encode
-  merely because an interval produced no output (heartbeats and journals exist
-  for this).
-- Accept success only when both `run.completed.status` and the process exit code
-  indicate success. Encoder percent reaching 100% is **not** success — verification
-  and commit still follow.
-- Inspect durable status without the original terminal:
-
-```bash
+.agents/run.sh runs unit
 .agents/run.sh runs list --active --json
 .agents/run.sh runs show <run-id> --json
 .agents/run.sh runs events <run-id> --after <seq>
+.agents/run.sh runs stop    # SIGTERM the unit; never kill -9 a healthy encode
 ```
+
+- Accept success only when both `run.completed.status` and the unit's exit
+  code indicate success. Encoder percent reaching 100% is **not** success —
+  verification and commit still follow. A journal stuck at `state=running`
+  with `exit_code=null` after the pid is gone is an unclean kill, not an
+  ffmpeg crash.
+- After an unclean kill: `runs stop` or kill leftover ffmpeg, remove
+  `.*.transcode-tmp.mkv`, resume with `--systemd` and `--skip-existing`.
+  Do not start a second encode against the same destination while the first
+  pid still lives.

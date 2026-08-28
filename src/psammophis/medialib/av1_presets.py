@@ -293,11 +293,13 @@ PRESETS: dict[tuple[str, str], Preset] = {
 
 
 def resolution_tier(height: int) -> str:
-    """Bucket by coded frame height. Letterboxing/pillarboxing doesn't need
-    special-casing here: a 2.39:1 film in a 1920x1080 frame is still a
-    genuine 1080-line frame (the bars are baked into the coded picture), and
-    this library is movies/TV, never portrait video, so width is never the
-    constraining dimension."""
+    """Bucket by a single coded dimension (usually frame height).
+
+    Letterboxing/pillarboxing doesn't need special-casing: a 2.39:1 film in
+    a 1920x1080 frame is still a genuine 1080-line frame. Portrait phone /
+    webcam captures must pass the *shorter* side via ``tier_extent`` so
+    480x854 is SD, not a fake 1080p remux.
+    """
     if height >= 1600:
         return "2160p"
     if height >= 800:
@@ -307,11 +309,31 @@ def resolution_tier(height: int) -> str:
     return "sd"
 
 
-def select_preset(height: int, profile: str, hdr: bool) -> Preset:
+def is_portrait(width: int, height: int) -> bool:
+    return width > 0 and height > width
+
+
+def tier_extent(width: int, height: int) -> int:
+    """Dimension that picks the resolution tier for this frame.
+
+    Landscape movies/TV use coded height. Portrait captures use the shorter
+    side (see notes/source-class-audit.md, VDH probe).
+    """
+    if is_portrait(width, height):
+        return width
+    return height
+
+
+def resolution_tier_for_frame(width: int, height: int) -> str:
+    return resolution_tier(tier_extent(width, height))
+
+
+def select_preset(height: int, profile: str, hdr: bool, *, width: int | None = None) -> Preset:
     del hdr  # HDR changes signaling, not the quality target.
     if profile not in PROFILES:
         raise ValueError(f"unknown profile {profile!r}, expected one of {PROFILES}")
-    tier = resolution_tier(height)
+    extent = height if width is None else tier_extent(width, height)
+    tier = resolution_tier(extent)
     key = (tier, profile)
     if key not in PRESETS:
         calibrated_tiers = sorted(t for t, p in PRESETS if p == profile)

@@ -83,9 +83,33 @@ Library-root resolution no longer walks ancestors for a directory named
   at `.cache/trackstrip/`.
 - Inspect runs: `psammophis runs list|show|events`
 
-For long encodes, skills should use JSONL, keep observing the same process, and
-treat success only when `run.completed` and the exit code agree. Do not relaunch
-work merely because an interval was quiet.
+For long encodes, skills should use JSONL and treat success only when
+`run.completed` and the exit code agree. Do not relaunch work merely because
+an interval was quiet.
+
+Never wait on a multi-hour `--yes` encode as a foreground agent tool call with
+an explicit timeout. An explicit timeout is a kill deadline (SIGTERM, then
+SIGKILL ~1s later), and the Grok/chat wrapper's maximum is 10 hours. A job
+that cannot finish inside that window will look like it "died mid-process"
+with no encoder error — the parent is shot, the journal stays `running`,
+and ffmpeg (started in its own session) can linger on a `.transcode-tmp.mkv`.
+
+Submit the job to systemd instead, then observe the unit + journal:
+
+```bash
+./run.sh --systemd --reporter jsonl --progress-interval 60 transcode run … --yes
+systemctl --user status psammophis-transcode.service
+journalctl --user -u psammophis-transcode.service -f
+./run.sh runs unit
+./run.sh runs list --active
+./run.sh runs stop          # SIGTERM the unit; do not kill -9 ffmpeg
+```
+
+`--systemd` is a global flag (before the command). The unit is
+`Type=simple` with `TimeoutStartSec=infinity` — systemd-run's default
+oneshot start timeout would kill the encode. Do not set a tool-call
+timeout around this; submit returns immediately. See
+`notes/process-cancellation.md`.
 
 ## Code quality
 

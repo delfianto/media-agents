@@ -227,6 +227,47 @@ def check_any_env_var(
     )
 
 
+def check_systemd_user(*, linger: bool | None = None, probe_linger: bool = True) -> CheckResult:
+    """Optional: long --yes encodes should be systemd --user units, not chat jobs."""
+    from psammophis.runtime.systemd_job import systemd_run_available, user_linger_enabled
+
+    if not systemd_run_available():
+        return CheckResult(
+            "systemd --user (systemd-run)",
+            "runtime",
+            False,
+            False,
+            install_hint=(
+                "install systemd so `psammophis --systemd transcode run … --yes` can "
+                "supervise multi-hour encodes; without it, detach some other way "
+                "and never hold a chat-tool timeout over an encode"
+            ),
+        )
+    linger_state = user_linger_enabled() if probe_linger else linger
+    if linger_state is False:
+        return CheckResult(
+            "systemd --user (systemd-run)",
+            "runtime",
+            False,
+            False,
+            detail="systemd-run present, lingering disabled",
+            install_hint=(
+                "loginctl enable-linger $USER -- user units die when the login "
+                "session ends, which kills a detached encode"
+            ),
+        )
+    detail = "systemd-run present"
+    if linger_state is True:
+        detail += ", linger=yes"
+    return CheckResult(
+        "systemd --user (systemd-run)",
+        "runtime",
+        False,
+        True,
+        detail=detail,
+    )
+
+
 def all_checks() -> list[CheckResult]:
     return [
         check_python_version(),
@@ -389,6 +430,7 @@ def all_checks() -> list[CheckResult]:
             required=False,
             install_hint=("optional until fetching subtitles; register at opensubtitles.com/api"),
         ),
+        check_systemd_user(),
         check_binary(
             "stash-mcp",
             "stash-app",

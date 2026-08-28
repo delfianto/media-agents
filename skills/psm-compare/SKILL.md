@@ -1,6 +1,6 @@
 ---
 name: psm-compare
-description: Deeply compare an encoded video or compressed image against its original/reference source with objective perceptual metrics. Use for source-versus-encode video validation, AV1/x265/x264 preset audits, JPEG/PNG-to-AVIF/WebP/JXL comparisons, image-quality checks, CRF/CQ comparisons, transparency judgments, compression-artifact investigations, or comparing candidate encodes. Runs stratified VMAF plus PSNR/SSIM/MS-SSIM for video; runs color-managed SSIM/PSNR/RMSE and optional SSIMULACRA2 for images; handles HDR consistently, reports lower-tail and worst-frame results for video, and never modifies either input.
+description: Deeply compare an encoded video or compressed image against its original/reference source with objective perceptual metrics. Use for source-versus-encode video validation, AV1/x265/x264 preset audits, JPEG/PNG-to-AVIF/WebP/JXL comparisons, image-quality checks, CRF/CQ comparisons, transparency judgments, compression-artifact investigations, or comparing candidate encodes. Runs stratified VMAF plus PSNR/SSIM/MS-SSIM for video; runs color-managed SSIM/PSNR/RMSE and optional SSIMULACRA2 for images; handles HDR consistently, reports lower-tail and worst-frame results for video, and never modifies either input. Long `deep`/`full` video compares MUST be submitted with the global `--systemd` flag.
 ---
 
 # Compare
@@ -126,16 +126,17 @@ implementation.
 
 ## Progress for long comparisons
 
-Full-length video comparisons can run a long time. Prefer JSONL progress so the
-session can be observed without ANSI noise:
+`deep` / `full` video compares can run a long time. Submit them to systemd
+the same way as a transcode `--yes` — do not hold a chat-tool timeout over
+them.
 
 ```bash
-.agents/run.sh --reporter jsonl --progress-interval 30 compare \
+.agents/run.sh --systemd --reporter jsonl --progress-interval 30 compare \
   --reference "ingest/source.mkv" \
   --distorted "transcode/encode.mkv"
 ```
 
-- Continue observing the **same** process/session; do not relaunch merely because
-  an interval produced no output.
-- Accept success only when both process exit code and any terminal reporter event
-  indicate success.
+Watch `systemctl --user status psammophis-compare.service` or
+`.agents/run.sh runs unit psammophis-compare`. Do not relaunch merely
+because an interval produced no output. Success is the process exit code
+plus any terminal reporter event, not a quiet log.

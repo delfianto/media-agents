@@ -194,6 +194,101 @@ def test_apply_source_class_stream_raises_more_than_webrip():
     assert stream.svt_hdr_crf == base.svt_hdr_crf + 6
 
 
+def test_portrait_480x854_webcam_is_stream_not_1080p_lowest():
+    # VDH Gebby cluster: height-based 1080p lowest ceiling was 1.5 Mb/s.
+    c = classify_source(
+        _probed(
+            codec="h264",
+            profile="Main",
+            width=480,
+            height=854,
+            pix_fmt="yuv420p",
+            bit_rate=954_000,
+        )
+    )
+    assert c.name == "stream"
+    assert c.portrait is True
+    assert c.stream_ceiling_bps == STREAM_CEILING_BPS["sd"]
+    assert "portrait" in c.reason
+
+
+def test_portrait_1080x1920_is_stream_on_1080p_tier():
+    c = classify_source(
+        _probed(
+            codec="h264",
+            profile="High",
+            width=1080,
+            height=1920,
+            pix_fmt="yuv420p",
+            bit_rate=2_270_000,
+        )
+    )
+    assert c.name == "stream"
+    assert c.portrait is True
+    assert c.master_floor_bps == 12_000_000
+
+
+def test_portrait_high_bitrate_cannot_become_master():
+    # 396x858 @ 5.6 Mb/s: min-side SD master floor is 4 Mb/s.
+    c = classify_source(
+        _probed(
+            codec="h264",
+            profile="High",
+            width=396,
+            height=858,
+            pix_fmt="yuv420p",
+            bit_rate=5_580_000,
+        )
+    )
+    assert c.name == "stream"
+    assert "webcam/HLS" in c.reason
+
+
+def test_portrait_below_sd_lowest_ceiling_is_lowest():
+    c = classify_source(
+        _probed(
+            codec="h264",
+            profile="High",
+            width=368,
+            height=720,
+            pix_fmt="yuv420p",
+            bit_rate=400_000,
+        )
+    )
+    assert c.name == "lowest"
+    assert c.portrait is True
+
+
+def test_portrait_10bit_hevc_can_still_be_master():
+    c = classify_source(
+        _probed(
+            codec="hevc",
+            profile="Main 10",
+            width=1080,
+            height=1920,
+            pix_fmt="yuv420p10le",
+            bit_rate=40_000_000,
+        )
+    )
+    assert c.name == "master"
+    assert c.portrait is True
+
+
+def test_landscape_unchanged_by_portrait_rule():
+    c = classify_source(
+        _probed(
+            codec="h264",
+            profile="High",
+            width=3840,
+            height=2160,
+            pix_fmt="yuv420p",
+            bit_rate=21_000_000,
+        )
+    )
+    assert c.name == "webrip"
+    assert c.portrait is False
+
+
 def test_apply_source_class_lowest_raises_most():
     base = presets.PRESETS[("2160p", "film")]
     lowest = apply_source_class(base, "lowest")

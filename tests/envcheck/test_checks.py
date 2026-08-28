@@ -75,6 +75,29 @@ def test_check_pip_or_uv_missing_both(monkeypatch):
     assert "uv" in result.install_hint
 
 
+def test_check_systemd_user_missing(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    result = checks.check_systemd_user(probe_linger=False)
+    assert result.found is False
+    assert result.required is False
+    assert "psammophis --systemd" in result.install_hint
+
+
+def test_check_systemd_user_linger_off(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/systemd-run")
+    result = checks.check_systemd_user(linger=False, probe_linger=False)
+    assert result.found is False
+    assert "lingering disabled" in result.detail
+    assert "enable-linger" in result.install_hint
+
+
+def test_check_systemd_user_ok(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/systemd-run")
+    result = checks.check_systemd_user(linger=True, probe_linger=False)
+    assert result.found is True
+    assert "linger=yes" in result.detail
+
+
 def test_check_svt_implementation_reports_fork(monkeypatch):
     monkeypatch.setattr(
         checks,

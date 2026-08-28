@@ -17,12 +17,16 @@ from .journal import (
     read_events,
     read_status,
 )
+from .systemd_job import SystemdJobError, default_unit_name, stop_user_service, unit_status_text
 
 
 def build_parser(default_state_dir: Path | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="psammophis runs",
-        description="Inspect durable Psammophis run journals (read-only).",
+        description=(
+            "Inspect durable run journals, and status/stop systemd --user jobs "
+            "started with `psammophis --systemd`."
+        ),
     )
     parser.add_argument(
         "--state-dir",
@@ -49,6 +53,25 @@ def build_parser(default_state_dir: Path | None = None) -> argparse.ArgumentPars
     events_p = sub.add_parser("events", help="Print journal events for a run")
     events_p.add_argument("run_id")
     events_p.add_argument("--after", type=int, default=0, help="Only events with seq > N")
+
+    unit_p = sub.add_parser("unit", help="Show systemd --user status for a submitted job")
+    unit_p.add_argument(
+        "unit",
+        nargs="?",
+        default="psammophis-transcode",
+        help="Unit name without .service (default: psammophis-transcode)",
+    )
+
+    stop_p = sub.add_parser(
+        "stop",
+        help="SIGTERM a systemd --user job (gives psammophis time to cancel ffmpeg)",
+    )
+    stop_p.add_argument(
+        "unit",
+        nargs="?",
+        default="psammophis-transcode",
+        help="Unit name without .service (default: psammophis-transcode)",
+    )
     return parser
 
 
@@ -69,6 +92,20 @@ def _valid_run_id(run_id: str) -> bool:
 
 def main(argv: list[str] | None = None, context: AppContext | None = None) -> int:
     args = build_parser(context.state_dir if context is not None else None).parse_args(argv)
+
+    if args.command in {"unit", "stop"}:
+        unit = args.unit or default_unit_name("transcode")
+        try:
+            if args.command == "stop":
+                stop_user_service(unit)
+                print(f"stopped {unit}.service")
+                return 0
+            print(unit_status_text(unit))
+            return 0
+        except SystemdJobError as exc:
+            print(exc, file=sys.stderr)
+            return exc.exit_code
+
     try:
         state_root = _state_root(args)
     except SystemExit as exc:

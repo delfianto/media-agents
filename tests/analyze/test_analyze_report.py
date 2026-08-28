@@ -66,6 +66,28 @@ def test_build_analysis_picks_tier_and_preset_from_height_and_profile():
     assert a.source_class.name == "master"
 
 
+def test_build_analysis_portrait_webcam_uses_sd_stream():
+    probed = _probed(
+        _video(
+            codec_name="h264",
+            profile="Main",
+            width=480,
+            height=854,
+            pix_fmt="yuv420p",
+            bit_rate=954_000,
+            color_transfer="bt709",
+        )
+    )
+    a = _build_analysis("gebby.mp4", probed, "film", gpu_index=0, nvencc_ok=False, grain=None)
+    assert a.tier == "sd"
+    assert a.source_class.name == "stream"
+    assert a.source_class.portrait is True
+    assert a.preset.name == "sd-film+stream"
+    text = format_analysis(a)
+    assert "sd, portrait" in text
+    assert "source-class: stream" in text
+
+
 def test_build_analysis_webrip_source_raises_cq():
     probed = _probed(
         _video(

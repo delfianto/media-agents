@@ -175,3 +175,44 @@ def test_sigterm_maps_to_cancelled_terminal_event(monkeypatch, capsys):
     assert len(terminals) == 1
     assert terminals[0]["status"] == "cancelled"
     assert terminals[0]["exit_code"] == 143
+
+
+def test_systemd_flag_submits_instead_of_running_the_handler(monkeypatch, capsys):
+    from psammophis.runtime.systemd_job import SubmitResult
+
+    def boom(_command):
+        raise AssertionError("handler must not run when --systemd is set")
+
+    monkeypatch.setattr(cli, "_load_handler", boom)
+
+    captured: dict[str, object] = {}
+
+    def fake_submit(**kwargs):
+        captured.update(kwargs)
+        return SubmitResult(unit="psammophis-transcode", argv=["systemd-run"], linger=True)
+
+    monkeypatch.setattr(cli, "submit_user_service", fake_submit)
+    assert cli.main(["--systemd", "transcode", "run", "--path", "X", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "started user unit psammophis-transcode.service" in out
+    assert captured["command"] == "transcode"
+    assert captured["stripped_argv"] == ["transcode", "run", "--path", "X", "--yes"]
+    assert captured["force"] is False
+
+
+def test_systemd_refuses_transcode_dry_run(monkeypatch, capsys):
+    def boom(_command):
+        raise AssertionError("dry-run must stay in-process")
+
+    monkeypatch.setattr(cli, "_load_handler", boom)
+    assert cli.main(["--systemd", "transcode", "run", "--path", "X"]) == 2
+    assert "dry-run should stay in-process" in capsys.readouterr().err
+
+
+def test_systemd_does_not_apply_to_runs(monkeypatch, capsys):
+    def boom(_command):
+        raise AssertionError("runs must not be submitted as a unit")
+
+    monkeypatch.setattr(cli, "_load_handler", boom)
+    assert cli.main(["--systemd", "runs", "list"]) == 2
+    assert "--systemd does not apply to `runs`" in capsys.readouterr().err

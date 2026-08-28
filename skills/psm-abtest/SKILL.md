@@ -1,6 +1,6 @@
 ---
 name: psm-abtest
-description: Use when the user wants a scientific encoder A/B — compare two or more SVT-AV1 / svt-av1-hdr recipes on the same source by cutting short lossless clips, encoding each clip with every recipe, and scoring them with compare (VMAF/SSIMULACRA2). Use for preset audits, CRF/grain/tune bake-offs, or proving a settings change before editing av1_presets.py. Never mutates the original file.
+description: Use when the user wants a scientific encoder A/B — compare two or more SVT-AV1 / svt-av1-hdr recipes on the same source by cutting short lossless clips, encoding each clip with every recipe, and scoring them with compare (VMAF/SSIMULACRA2). Use for preset audits, CRF/grain/tune bake-offs, or proving a settings change before editing av1_presets.py. Applied `--yes` work MUST use the global `--systemd` flag. Never mutates the original file.
 allowed-tools:
     - Bash
 metadata:
@@ -22,7 +22,17 @@ Decide whether an encoder recipe is better than another by measuring both agains
   --compare-mode full
 ```
 
-Defaults to a **dry-run** that prints windows, resolved settings, and one encode command. Pass `--yes` to extract FFV1 refs, encode, and score. Writes only under `--output-dir` (default `<root>/.cache/psammophis/abtest/<stem>-<utc>/`).
+Defaults to a **dry-run** that prints windows, resolved settings, and one encode command. Pass `--yes` to extract FFV1 refs, encode, and score. **`--yes` runs on systemd** (global flag, before `abtest`) — same rule as transcode. Do not hold a chat-tool timeout over it.
+
+```bash
+.agents/run.sh --systemd --reporter jsonl abtest \
+  --source "studio/Title.mp4" \
+  --variant current=2160p-film \
+  --variant cand=2160p-film,crf=24,grain=0 \
+  --yes
+```
+
+Writes only under `--output-dir` (default `<root>/.cache/psammophis/abtest/<stem>-<utc>/`). Watch with `systemctl --user status psammophis-abtest.service` or `.agents/run.sh runs unit psammophis-abtest`.
 
 ## Variant specs
 
@@ -50,7 +60,7 @@ Prefer `--at` on known hard timestamps (close-ups, grain, dark, motion). `--comp
 4. Prefer VMAF **p5/min** and SSIMULACRA2 over the mean. Inspect worst stills before changing `av1_presets.py`.
 5. Film-grain synthesis can tank full-reference scores while looking acceptable.
 
-After `--yes`, read `rollup.json` and `reports/*.json`. Quiet intervals are not a reason to relaunch.
+After `--yes`, read `rollup.json` and `reports/*.json`. Quiet intervals are not a reason to relaunch. Success is `run.completed` plus exit code 0, not encoder percent.
 
 ## Related
 

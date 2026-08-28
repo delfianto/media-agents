@@ -33,6 +33,24 @@ def test_runs_unknown(tmp_path):
     assert runs_main(["--state-dir", str(tmp_path), "show", "missing"]) == 1
 
 
+def test_runs_unit_and_stop_do_not_need_a_state_dir(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "psammophis.runtime.runs_cli.unit_status_text",
+        lambda unit: f"status-for {unit}",
+    )
+    assert runs_main(["unit", "psammophis-transcode"]) == 0
+    assert capsys.readouterr().out.strip() == "status-for psammophis-transcode"
+
+    stopped: list[str] = []
+    monkeypatch.setattr(
+        "psammophis.runtime.runs_cli.stop_user_service",
+        lambda unit: stopped.append(unit),
+    )
+    assert runs_main(["stop"]) == 0
+    assert stopped == ["psammophis-transcode"]
+    assert "stopped psammophis-transcode.service" in capsys.readouterr().out
+
+
 def test_runs_rejects_path_traversal(tmp_path, capsys):
     assert runs_main(["--state-dir", str(tmp_path), "show", "../outside"]) == 2
     assert "invalid run ID" in capsys.readouterr().err

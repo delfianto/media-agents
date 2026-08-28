@@ -2,6 +2,8 @@
 # Checkout bootstrap for psammophis. Humans: ./run.sh … ; skills: .agents/run.sh …
 # This script does not route commands or construct PYTHONPATH — uv + the
 # installed package own that. Signals and exit status pass through via exec.
+# Long --yes work: ./run.sh --systemd --reporter jsonl transcode run … --yes
+# (--systemd is a psammophis global, before the command name).
 
 set -euo pipefail
 

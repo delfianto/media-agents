@@ -506,17 +506,15 @@ these files as **stream**, not to invent a fifth table.
 
 ## 5. Classifier bugs and follow-ups
 
-1. **Portrait height inflates the tier.** 480×854 → 1080p, 1080×1920 →
-   2160p. Affects both the preset extras (uhq + AQ-10 on a 480-wide
-   file) and the bitrate ceilings (1.5 Mb/s 1080p lowest vs 0.6 Mb/s SD
-   lowest). Fix is `resolution_tier(min(width, height))` **plus**
-   retuned floors, or an explicit portrait branch. Do not ship min-side
-   ceilings with the current SD master floor of 4 Mb/s.
-2. **`lowest` by bitrate ≠ `lowest` by origin.** A 5.6 Mb/s 396-wide
-   capture classified webrip (or master under min-side). A 2.3 Mb/s
-   1080×1920 capture classified lowest only because it was scored as
-   2160p. Content origin (VDH / HLS / camcorder / MPEG-2) is the real
-   label; bitrate is a proxy.
+1. **Portrait height used to inflate the tier.** 480×854 → 1080p,
+   1080×1920 → 2160p. **Shipped:** `resolution_tier_for_frame` uses
+   the shorter side, and portrait 8-bit captures cap at `stream`
+   (never master, so a 5.6 Mb/s 396-wide file cannot hit the SD
+   master floor). 10-bit / mezzanine portrait can still be master.
+2. **`lowest` by bitrate ≠ `lowest` by origin.** Landscape recordings
+   still use bitrate/legacy-codec only. Portrait VDH-style is now
+   origin-capped at stream unless the min-side bitrate is under the
+   lowest ceiling.
 3. **webrip +4 CQ is the only non-master delta with a binding
    overspend measurement** (WowGirls). stream +8 / lowest +12 are
    now bounded by VDH but not by a landscape catalog title.

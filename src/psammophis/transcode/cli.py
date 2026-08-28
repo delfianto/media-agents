@@ -40,7 +40,7 @@ from psammophis.runtime.signals import CancellationRequested
 from . import config, degrain, langfilter
 from . import run as run_mod
 
-DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".ts", ".mov"})
+DEFAULT_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".ts", ".mov", ".mpeg", ".mpg"})
 
 
 def _cache_path(root: Path, leaf: str, explicit: str | None = None) -> Path:
@@ -75,10 +75,16 @@ def _grain_threshold(value: str) -> float:
     return threshold
 
 
-def _output_collisions(output_dir: Path, candidates: list[Path]) -> dict[Path, list[Path]]:
+def _output_collisions(
+    output_dir: Path,
+    candidates: list[Path],
+    *,
+    root: Path,
+    mirror: bool,
+) -> dict[Path, list[Path]]:
     destinations: dict[Path, list[Path]] = {}
     for candidate in candidates:
-        destination = (output_dir / candidate.name).with_suffix(".mkv")
+        destination = run_mod.destination_path(root, candidate, output_dir, mirror=mirror)
         destinations.setdefault(destination, []).append(candidate)
     return {path: sources for path, sources in destinations.items() if len(sources) > 1}
 
@@ -92,7 +98,13 @@ def cmd_probe(args):
     single_audio_track = not args.all_audio_tracks
     svt_implementation = detect_svt_implementation()
     candidates = list(
-        walk_media_files(root, DEFAULT_EXTENSIONS, path_filter=args.path, limit=args.limit)
+        walk_media_files(
+            root,
+            DEFAULT_EXTENSIONS,
+            path_filter=args.path,
+            limit=args.limit,
+            skip_root_files=not args.include_root_files,
+        )
     )
     context: AppContext | None = getattr(args, "_context", None)
     emitter = (
@@ -156,10 +168,12 @@ def cmd_probe(args):
             dynamic_range = "HDR10"
         else:
             dynamic_range = "SDR"
-        tier = presets.resolution_tier(video["height"])
+        width = int(video.get("width") or 0)
+        height = int(video.get("height") or 0)
+        tier = presets.resolution_tier_for_frame(width, height)
         classified = classify_source(probed, override=args.source_class)
         preset = apply_source_class(
-            presets.select_preset(video["height"], args.profile, hdr), classified.name
+            presets.select_preset(height, args.profile, hdr, width=width), classified.name
         )
         size_desc = human_size(probed["format"].get("size"))
         grain = None
@@ -231,8 +245,9 @@ def cmd_probe(args):
         dropped_subs = len(probed["subtitles"]) - len(kept_subs)
 
         print(f"  {rel}")
+        tier_note = f"{tier}, portrait" if classified.portrait else tier
         print(
-            f"      {video['width']}x{video['height']} ({tier}) {video['codec_name']} "
+            f"      {video['width']}x{video['height']} ({tier_note}) {video['codec_name']} "
             f"{video.get('profile') or ''} {dynamic_range}  size={size_desc}"
         )
         bps = (
@@ -312,11 +327,13 @@ def cmd_list_presets(args):
         "\nHDR preserves 10-bit color and HDR metadata without changing the CRF/CQ quality target."
     )
     print(
-        "\nSource class (auto-detected from codec/profile/bitrate; override with "
-        "--source-class master|webrip|stream|lowest) raises CRF/CQ for webrip "
-        "(+3 CRF / +4 CQ), stream (+6 / +8), and lowest (+10 / +12) so those "
-        "files are not treated as Blu-ray masters. The table above is the "
-        "master calibration."
+        "\nSource class (auto-detected from codec/profile/bitrate and portrait "
+        "geometry; override with --source-class master|webrip|stream|lowest) "
+        "raises CRF/CQ for webrip (+3 CRF / +4 CQ), stream (+6 / +8), and "
+        "lowest (+10 / +12) so those files are not treated as Blu-ray masters. "
+        "Portrait 8-bit phone/webcam captures (VDH-style HLS) use the shorter "
+        "side for the resolution tier and cap at stream. The table above is "
+        "the master calibration."
     )
     print(
         f"Output bitrate is additionally capped to {presets.MAX_BITRATE_FRACTION_OF_SOURCE:.0%} "
@@ -346,6 +363,10 @@ def cmd_run(args):
 
     if args.overwrite_existing and output_dir is None:
         raise config.ConfigError("--overwrite-existing requires --output-dir")
+    if args.mirror and output_dir is None:
+        raise config.ConfigError("--mirror requires --output-dir")
+    if args.skip_existing and output_dir is None:
+        raise config.ConfigError("--skip-existing requires --output-dir")
     if cover_image_path is not None and not cover_image_path.is_file():
         raise config.ConfigError(f"cover image is not a file: {cover_image_path}")
 
@@ -406,6 +427,7 @@ def cmd_run(args):
             path_filter=args.path,
             limit=args.limit,
             exclude_dirs=exclude_dirs,
+            skip_root_files=not args.include_root_files,
         )
     )
     if emitter is not None:
@@ -416,7 +438,7 @@ def cmd_run(args):
             elapsed_seconds=time.monotonic() - discovery_started,
         )
     if output_dir is not None:
-        collisions = _output_collisions(output_dir, candidates)
+        collisions = _output_collisions(output_dir, candidates, root=root, mirror=args.mirror)
         if collisions:
             for destination, sources in sorted(collisions.items()):
                 joined = ", ".join(str(source.relative_to(root)) for source in sources)
@@ -428,6 +450,17 @@ def cmd_run(args):
             if context is not None:
                 context.record_outcome(status="failed", errors=len(collisions))
             return 2
+
+    skipped_existing = 0
+    if args.skip_existing and output_dir is not None and not args.overwrite_existing:
+        kept: list[Path] = []
+        for candidate in candidates:
+            dest = run_mod.destination_path(root, candidate, output_dir, mirror=args.mirror)
+            if dest.is_file() and dest.stat().st_size > 0:
+                skipped_existing += 1
+                continue
+            kept.append(candidate)
+        candidates = kept
 
     changed = planned = errors = 0
     for index, abs_path in enumerate(candidates, start=1):
@@ -507,9 +540,11 @@ def cmd_run(args):
                 audio_copy=audio_copy,
                 max_bitrate_fraction=max_bitrate_fraction,
                 output_dir=output_dir,
+                mirror_output=args.mirror,
                 cover_image_path=cover_image_path,
                 auto_cover_art=auto_cover_art,
                 overwrite_existing=args.overwrite_existing,
+                skip_existing=args.skip_existing,
                 on_progress=_progress if args.yes else None,
                 on_phase=_phase,
                 on_heartbeat=_heartbeat if args.yes else None,
@@ -548,14 +583,20 @@ def cmd_run(args):
                     status="skipped",
                     detail=result.detail,
                 )
+        elif result.status == "unchanged":
+            if emitter is not None:
+                emitter.emit(
+                    ItemCompleted,
+                    item=str(rel),
+                    status="skipped",
+                    detail=result.detail,
+                )
         elif result.status == "changed":
             changed += 1
             print(f"  [OK] {result.rel}  ({result.detail})")
             if emitter is not None:
-                final_path = (
-                    (output_dir / abs_path.name).with_suffix(".mkv")
-                    if output_dir is not None
-                    else abs_path.with_suffix(".mkv")
+                final_path = run_mod.destination_path(
+                    root, abs_path, output_dir, mirror=args.mirror
                 )
                 emitter.emit(
                     ItemCompleted,
@@ -582,7 +623,8 @@ def cmd_run(args):
                 )
 
     mode = "APPLIED" if args.yes else "DRY RUN (pass --yes to execute for real)"
-    print(f"\n[{mode}] changed={changed} planned={planned} errors={errors}")
+    extra = f" skipped={skipped_existing}" if skipped_existing else ""
+    print(f"\n[{mode}] changed={changed} planned={planned} errors={errors}{extra}")
     if args.yes and output_dir:
         print(f"Converted files written under: {output_dir}  (originals untouched)")
     elif args.yes and backup_dir and changed:
@@ -635,6 +677,16 @@ def cmd_purge_backups(args):
     return 0
 
 
+def _add_walk_args(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--include-root-files",
+        action="store_true",
+        help="Include media files sitting directly in --root (default: skip them, "
+        "so a loose inbox file is not treated as library content). Needed when "
+        "--root itself is the folder of files to convert.",
+    )
+
+
 def _add_source_class_arg(sp: argparse.ArgumentParser) -> None:
     sp.add_argument(
         "--source-class",
@@ -642,9 +694,10 @@ def _add_source_class_arg(sp: argparse.ArgumentParser) -> None:
         default="auto",
         help="Source delivery class: master (Blu-ray remux/raw), webrip (decent but "
         "already compressed), stream (streaming-optimized), or lowest (recordings, "
-        "vintage, legacy codecs). auto (default) detects from codec, profile, and "
-        "bitrate. The master table is the quality calibration; the other classes "
-        "raise CRF/CQ so those files are not treated as remuxes.",
+        "vintage, legacy codecs). auto (default) detects from codec, profile, "
+        "bitrate, and portrait webcam/HLS geometry. The master table is the "
+        "quality calibration; the other classes raise CRF/CQ so those files "
+        "are not treated as remuxes.",
     )
 
 
@@ -714,6 +767,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         "--path", help="Only consider files whose relative path contains this substring"
     )
     sp.add_argument("--limit", type=int, help="Stop after N files")
+    _add_walk_args(sp)
     sp.add_argument(
         "--profile",
         choices=presets.PROFILES,
@@ -741,6 +795,7 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         "--path", help="Only consider files whose relative path contains this substring"
     )
     sp.add_argument("--limit", type=int, help="Stop after N files")
+    _add_walk_args(sp)
     sp.add_argument(
         "--profile",
         choices=presets.PROFILES,
@@ -772,12 +827,19 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
     sp.add_argument(
         "--output-dir",
         default=None,
-        help="Write converted files directly into this directory under their own filename "
-        "(flat -- not mirroring each file's path relative to --root) instead of swapping in "
-        "place. When set, the original source is never touched -- no backup/delete happens "
-        "at all. A destination filename that already exists is left alone and reported as "
-        "an error unless --overwrite-existing is passed. Default: TRANSCODE_OUTPUT_DIR "
-        "from .env, or in-place if neither is set.",
+        help="Write converted files into this directory instead of swapping in place. "
+        "Default layout is flat (output-dir/name.mkv). Pass --mirror to keep each "
+        "file's path relative to --root. The original source is never touched. A "
+        "destination that already exists is left alone unless --overwrite-existing "
+        "is passed. Default: TRANSCODE_OUTPUT_DIR from .env, or in-place if neither "
+        "is set.",
+    )
+    sp.add_argument(
+        "--mirror",
+        action="store_true",
+        help="With --output-dir, write output-dir/<path-relative-to-root>.mkv instead "
+        "of flattening every file into output-dir/. Required when sources in "
+        "different folders share a filename.",
     )
     sp.add_argument(
         "--overwrite-existing",
@@ -785,6 +847,12 @@ def build_parser(default_root: str) -> argparse.ArgumentParser:
         help="When --output-dir is set and the destination filename already exists, replace "
         "it instead of bailing out with an error (default: refuse and leave the existing "
         "file alone)",
+    )
+    sp.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="When --output-dir is set, skip sources whose destination already exists "
+        "(resume a long batch without treating those as errors)",
     )
     sp.add_argument(
         "--no-backup",
